@@ -209,7 +209,7 @@ export function PhotoGalleryClient() {
       return;
     }
 
-    setPhotos((data ?? []) as GalleryPhoto[]);
+    setPhotos((data ?? []) as unknown as GalleryPhoto[]);
     setLoading(false);
   }
 
