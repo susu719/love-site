@@ -25,12 +25,6 @@ type RelationshipSettings = {
   startDate: string;
 };
 
-type UpcomingAnniversary = Anniversary & {
-  daysLeft: number;
-  nextDate: Date;
-  yearCount: number;
-};
-
 const defaultSettings: RelationshipSettings = {
   anniversaries: [
     {

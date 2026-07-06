@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowDownAZ,
   ArrowUpAZ,
@@ -90,8 +90,6 @@ export function PhotoGalleryClient() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
-  const isDemoMode = !isSupabaseConfigured || !user;
-
   const sortedPhotos = useMemo(() => {
     const nextPhotos = [...photos];
 
@@ -112,6 +110,23 @@ export function PhotoGalleryClient() {
 
   const selectedPhoto =
     selectedIndex === null ? null : (sortedPhotos[selectedIndex] ?? null);
+
+  const goToPhoto = useCallback(
+    (direction: "previous" | "next") => {
+      setSelectedIndex((current) => {
+        if (current === null) {
+          return current;
+        }
+
+        if (direction === "previous") {
+          return current === 0 ? sortedPhotos.length - 1 : current - 1;
+        }
+
+        return current === sortedPhotos.length - 1 ? 0 : current + 1;
+      });
+    },
+    [sortedPhotos.length],
+  );
 
   useEffect(() => {
     if (!supabase) {
@@ -170,7 +185,7 @@ export function PhotoGalleryClient() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedIndex, sortedPhotos.length]);
+  }, [goToPhoto, selectedIndex]);
 
   async function loadPhotos(userId: string) {
     if (!supabase) {
@@ -220,20 +235,6 @@ export function PhotoGalleryClient() {
         ...photo,
         sort_order: orderIndex + 1,
       }));
-    });
-  }
-
-  function goToPhoto(direction: "previous" | "next") {
-    setSelectedIndex((current) => {
-      if (current === null) {
-        return current;
-      }
-
-      if (direction === "previous") {
-        return current === 0 ? sortedPhotos.length - 1 : current - 1;
-      }
-
-      return current === sortedPhotos.length - 1 ? 0 : current + 1;
     });
   }
 
