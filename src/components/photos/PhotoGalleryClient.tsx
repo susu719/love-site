@@ -19,7 +19,7 @@ import {
   pageTransition,
   softHover,
 } from "@/components/shared/Motion";
-import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 
 type GalleryPhoto = {
   id: string;
