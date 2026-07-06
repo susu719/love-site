@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import L from "leaflet";
 import { MapContainer, Marker, TileLayer, useMap } from "react-leaflet";
 import { useEffect } from "react";
+import { Pencil, Trash2 } from "lucide-react";
 
 export type MappableMemory = {
   id: string;
@@ -16,11 +17,15 @@ export type MappableMemory = {
     id: string;
     image_url: string;
     caption: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
   }[];
 };
 
 type MemoryMapProps = {
   memories: MappableMemory[];
+  onEditMemory?: (memory: MappableMemory) => void;
+  onDeleteMemory?: (memory: MappableMemory) => void;
 };
 
 const markerIcon = L.divIcon({
@@ -51,17 +56,50 @@ function formatDate(date: string) {
   }).format(new Date(`${date}T00:00:00`));
 }
 
-export function MemoryMap({ memories }: MemoryMapProps) {
+export function MemoryMap({
+  memories,
+  onEditMemory,
+  onDeleteMemory,
+}: MemoryMapProps) {
   const mappableMemories = useMemo(
     () =>
-      memories.filter(
-        (memory) => memory.latitude != null && memory.longitude != null,
-      ),
+      memories
+        .map((memory) => {
+          const photoLocation = memory.photos.find(
+            (photo) => photo.latitude != null && photo.longitude != null,
+          );
+
+          return {
+            ...memory,
+            latitude: memory.latitude ?? photoLocation?.latitude ?? null,
+            longitude: memory.longitude ?? photoLocation?.longitude ?? null,
+          };
+        })
+        .filter(
+          (memory) => memory.latitude != null && memory.longitude != null,
+        ),
     [memories],
   );
   const [selectedMemory, setSelectedMemory] = useState<MappableMemory | null>(
     mappableMemories[0] ?? null,
   );
+
+  useEffect(() => {
+    setSelectedMemory((current) => {
+      if (mappableMemories.length === 0) {
+        return null;
+      }
+
+      if (!current) {
+        return mappableMemories[0];
+      }
+
+      return (
+        mappableMemories.find((memory) => memory.id === current.id) ??
+        mappableMemories[0]
+      );
+    });
+  }, [mappableMemories]);
 
   const center = selectedMemory?.latitude
     ? ([selectedMemory.latitude, selectedMemory.longitude] as [number, number])
@@ -132,6 +170,26 @@ export function MemoryMap({ memories }: MemoryMapProps) {
             <p className="mt-2 line-clamp-3 leading-7 text-[#68625b]">
               {selectedMemory.content || "沒有描述。"}
             </p>
+            {onEditMemory ? (
+              <button
+                className="mt-4 inline-flex h-10 items-center gap-2 rounded-full border border-black/[0.08] px-4 text-sm font-medium transition hover:border-black/[0.18]"
+                onClick={() => onEditMemory(selectedMemory)}
+                type="button"
+              >
+                <Pencil size={15} />
+                編輯這段回憶
+              </button>
+            ) : null}
+            {onDeleteMemory ? (
+              <button
+                className="mt-2 inline-flex h-10 items-center gap-2 rounded-full border border-[#f0c8c0] px-4 text-sm font-medium text-[#a13d2d] transition hover:border-[#d79b90]"
+                onClick={() => onDeleteMemory(selectedMemory)}
+                type="button"
+              >
+                <Trash2 size={15} />
+                刪除
+              </button>
+            ) : null}
           </div>
         </article>
       ) : null}

@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
   Image as ImageIcon,
@@ -23,6 +23,8 @@ import {
   pageTransition,
   softHover,
 } from "@/components/shared/Motion";
+import { RelationshipStats } from "@/components/dashboard/RelationshipStats";
+import { readPhotoLocation } from "@/lib/photo-location";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 const MemoryMap = dynamic(
@@ -97,6 +99,143 @@ function parseCoordinate(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizeImageUrl(url: string) {
+  const trimmedUrl = url.trim();
+  const driveFileMatch = trimmedUrl.match(
+    /^https:\/\/drive\.google\.com\/file\/d\/([^/]+)/,
+  );
+  const driveOpenMatch = trimmedUrl.match(
+    /^https:\/\/drive\.google\.com\/open\?id=([^&]+)/,
+  );
+  const driveUcMatch = trimmedUrl.match(
+    /^https:\/\/drive\.google\.com\/uc\?[^#]*id=([^&]+)/,
+  );
+
+  const googleDriveFileId =
+    driveFileMatch?.[1] ?? driveOpenMatch?.[1] ?? driveUcMatch?.[1];
+
+  if (googleDriveFileId) {
+    return `https://drive.google.com/thumbnail?id=${googleDriveFileId}&sz=w1200`;
+  }
+
+  return trimmedUrl;
+}
+
+function parseImageUrls(value: string) {
+  return value.split(/\r?\n/).map(normalizeImageUrl).filter(Boolean);
+}
+
+function getPhotoUrlFields(value: string) {
+  const fields = value.split(/\r?\n/);
+  return fields.length > 0 && fields.some((field) => field.trim())
+    ? fields
+    : [""];
+}
+
+function getFileExtension(file: File) {
+  return file.name.split(".").pop()?.toLowerCase() || "jpg";
+}
+
+async function isHeicFile(file: File) {
+  const extension = getFileExtension(file);
+
+  if (
+    file.type.toLowerCase().includes("heic") ||
+    file.type.toLowerCase().includes("heif") ||
+    extension === "heic" ||
+    extension === "heif"
+  ) {
+    return true;
+  }
+
+  const signature = new Uint8Array(await file.slice(4, 12).arrayBuffer());
+  const textSignature = new TextDecoder().decode(signature);
+  return textSignature === "ftypheic" || textSignature === "ftypheif";
+}
+
+async function prepareImageForUpload(file: File) {
+  if (!(await isHeicFile(file))) {
+    return file;
+  }
+
+  const heic2any = (await import("heic2any")).default;
+  const converted = await heic2any({
+    blob: file,
+    quality: 0.9,
+    toType: "image/jpeg",
+  });
+  const convertedBlob = Array.isArray(converted) ? converted[0] : converted;
+  const jpgName = file.name.replace(/\.(heic|heif|png)$/i, ".jpg");
+
+  return new File([convertedBlob], jpgName, {
+    lastModified: file.lastModified,
+    type: "image/jpeg",
+  });
+}
+
+function isBrowserDisplayableImage(url: string) {
+  const cleanUrl = url.split("?")[0].toLowerCase();
+  return !cleanUrl.endsWith(".heic") && !cleanUrl.endsWith(".heif");
+}
+
+function MemoryCover({
+  memory,
+  photoCount,
+}: {
+  memory: Memory;
+  photoCount: number;
+}) {
+  const displayablePhotos = memory.photos.filter((photo) =>
+    isBrowserDisplayableImage(photo.image_url),
+  );
+  const fallbackPhotos =
+    displayablePhotos.length > 0 ? displayablePhotos : memory.photos;
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const [hasTriedAllPhotos, setHasTriedAllPhotos] = useState(false);
+  const coverPhoto = fallbackPhotos[photoIndex] ?? null;
+
+  if (!coverPhoto?.image_url) {
+    return (
+      <div className="flex h-40 items-center justify-center bg-[#ebe6dd] text-[#8a8379]">
+        <ImageIcon size={28} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      {hasTriedAllPhotos ? (
+        <div className="flex h-60 flex-col items-center justify-center gap-2 bg-[#ebe6dd] px-6 text-center text-[#8a8379]">
+          <ImageIcon size={28} />
+          <p className="text-sm">照片載入失敗</p>
+        </div>
+      ) : (
+        /* eslint-disable-next-line @next/next/no-img-element */
+        <img
+          alt={memory.title}
+          className="h-60 w-full object-cover"
+          onError={() =>
+            setPhotoIndex((current) => {
+              if (current + 1 < fallbackPhotos.length) {
+                return current + 1;
+              }
+
+              setHasTriedAllPhotos(true);
+              return current;
+            })
+          }
+          src={coverPhoto.image_url}
+        />
+      )}
+      {photoCount > 1 ? (
+        <span className="absolute right-4 bottom-4 rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-[#1f1f1d] shadow-sm backdrop-blur">
+          共 {photoCount} 張照片
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 export function MemoriesClient() {
   const [user, setUser] = useState<User | null>(null);
   const [memories, setMemories] = useState<Memory[]>([]);
@@ -104,7 +243,9 @@ export function MemoriesClient() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
+  const formRef = useRef<HTMLDivElement>(null);
 
   const isDemoMode = !isSupabaseConfigured || !user;
 
@@ -113,6 +254,7 @@ export function MemoriesClient() {
       [...memories].sort((a, b) => b.memory_date.localeCompare(a.memory_date)),
     [memories],
   );
+  const photoUrlFields = getPhotoUrlFields(form.imageUrl);
 
   useEffect(() => {
     if (!supabase) {
@@ -150,6 +292,108 @@ export function MemoriesClient() {
     loadMemories(user.id);
   }, [user]);
 
+  async function handlePhotoLocationFile(
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      const location = await readPhotoLocation(file);
+
+      if (!location) {
+        setMessage(
+          "這張照片沒有可讀取的定位資訊。請試試手機原始照片，或手動填入經緯度。",
+        );
+        return;
+      }
+
+      setForm((current) => ({
+        ...current,
+        latitude: location.latitude.toFixed(6),
+        longitude: location.longitude.toFixed(6),
+      }));
+      setMessage("已從照片讀取定位，並填入地圖座標。");
+    } catch {
+      setMessage("讀取照片定位時發生問題，請換一張原始照片再試試。");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  async function handlePhotoUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+
+    if (files.length === 0) {
+      return;
+    }
+
+    if (!supabase || !user) {
+      setMessage("請先登入並設定 Supabase，才能直接上傳照片。");
+      event.target.value = "";
+      return;
+    }
+
+    setUploading(true);
+    setMessage(`正在上傳 ${files.length} 張照片...`);
+
+    const uploadedUrls: string[] = [];
+
+    for (const file of files) {
+      const uploadFile = await prepareImageForUpload(file);
+      const filePath = `${user.id}/${crypto.randomUUID()}.${getFileExtension(uploadFile)}`;
+      const { error } = await supabase.storage
+        .from("memory-photos")
+        .upload(filePath, uploadFile, {
+          cacheControl: "3600",
+          contentType: uploadFile.type || "application/octet-stream",
+          upsert: false,
+        });
+
+      if (error) {
+        setMessage(error.message);
+        setUploading(false);
+        event.target.value = "";
+        return;
+      }
+
+      const { data } = supabase.storage
+        .from("memory-photos")
+        .getPublicUrl(filePath);
+
+      uploadedUrls.push(data.publicUrl);
+
+      if (!form.latitude || !form.longitude) {
+        try {
+          const location = await readPhotoLocation(file);
+
+          if (location) {
+            setForm((current) => ({
+              ...current,
+              latitude: current.latitude || location.latitude.toFixed(6),
+              longitude: current.longitude || location.longitude.toFixed(6),
+            }));
+          }
+        } catch {
+          // Photo location is optional; upload should still succeed.
+        }
+      }
+    }
+
+    setForm((current) => ({
+      ...current,
+      imageUrl: [...parseImageUrls(current.imageUrl), ...uploadedUrls].join(
+        "\n",
+      ),
+    }));
+    setMessage(`已上傳 ${uploadedUrls.length} 張照片。`);
+    setUploading(false);
+    event.target.value = "";
+  }
+
   async function ensureProfile(currentUser: User) {
     if (!supabase) {
       return;
@@ -174,7 +418,7 @@ export function MemoriesClient() {
     const { data, error } = await supabase
       .from("memories")
       .select(
-        "id,title,content,memory_date,latitude,longitude,photos(id,image_url,caption)",
+        "id,title,content,memory_date,latitude,longitude,photos(id,image_url,caption,latitude,longitude)",
       )
       .eq("user_id", userId)
       .order("memory_date", { ascending: false });
@@ -194,17 +438,57 @@ export function MemoriesClient() {
     setEditingId(null);
   }
 
+  function updatePhotoUrl(index: number, value: string) {
+    const nextImageUrls = getPhotoUrlFields(form.imageUrl);
+
+    nextImageUrls[index] = value;
+
+    setForm((current) => ({
+      ...current,
+      imageUrl: nextImageUrls.join("\n"),
+    }));
+  }
+
+  function addPhotoUrl() {
+    setForm((current) => ({
+      ...current,
+      imageUrl: [...getPhotoUrlFields(current.imageUrl), ""].join("\n"),
+    }));
+  }
+
+  function removePhotoUrl(index: number) {
+    const nextImageUrls = getPhotoUrlFields(form.imageUrl).filter(
+      (_url, urlIndex) => urlIndex !== index,
+    );
+
+    setForm((current) => ({
+      ...current,
+      imageUrl: (nextImageUrls.length > 0 ? nextImageUrls : [""]).join("\n"),
+    }));
+  }
+
   function startEdit(memory: Memory) {
+    const photoLocation = memory.photos.find(
+      (photo) => photo.latitude != null && photo.longitude != null,
+    );
+
     setEditingId(memory.id);
     setForm({
       title: memory.title,
       memoryDate: memory.memory_date,
       description: memory.content ?? "",
-      imageUrl: memory.photos[0]?.image_url ?? "",
-      latitude: memory.latitude?.toString() ?? "",
-      longitude: memory.longitude?.toString() ?? "",
+      imageUrl: memory.photos.map((photo) => photo.image_url).join("\n"),
+      latitude: (memory.latitude ?? photoLocation?.latitude)?.toString() ?? "",
+      longitude:
+        (memory.longitude ?? photoLocation?.longitude)?.toString() ?? "",
     });
     setMessage("");
+    window.setTimeout(() => {
+      formRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 0);
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -285,19 +569,27 @@ export function MemoriesClient() {
 
     await supabase.from("photos").delete().eq("memory_id", memoryId);
 
-    if (!imageUrl.trim()) {
+    const imageUrls = parseImageUrls(imageUrl);
+
+    if (imageUrls.length === 0) {
       return;
     }
 
-    await supabase.from("photos").insert({
-      memory_id: memoryId,
-      user_id: userId,
-      image_url: imageUrl.trim(),
-      sort_order: 0,
-    });
+    await supabase.from("photos").insert(
+      imageUrls.map((url, index) => ({
+        memory_id: memoryId,
+        user_id: userId,
+        image_url: url,
+        latitude: parseCoordinate(form.latitude),
+        longitude: parseCoordinate(form.longitude),
+        sort_order: index,
+      })),
+    );
   }
 
   function saveDemoMemory() {
+    const imageUrls = parseImageUrls(form.imageUrl);
+
     const nextMemory: Memory = {
       id: editingId ?? crypto.randomUUID(),
       title: form.title,
@@ -305,15 +597,11 @@ export function MemoriesClient() {
       memory_date: form.memoryDate,
       latitude: parseCoordinate(form.latitude),
       longitude: parseCoordinate(form.longitude),
-      photos: form.imageUrl
-        ? [
-            {
-              id: `photo-${editingId ?? crypto.randomUUID()}`,
-              image_url: form.imageUrl,
-              caption: null,
-            },
-          ]
-        : [],
+      photos: imageUrls.map((url, index) => ({
+        id: `photo-${editingId ?? crypto.randomUUID()}-${index}`,
+        image_url: url,
+        caption: null,
+      })),
     };
 
     setMemories((current) =>
@@ -378,6 +666,10 @@ export function MemoriesClient() {
         </nav>
       </header>
 
+      <section className="mx-auto max-w-6xl px-5 pt-8 sm:px-8">
+        <RelationshipStats />
+      </section>
+
       <main className="mx-auto grid max-w-6xl gap-8 px-5 py-10 sm:px-8 xl:grid-cols-[0.82fr_1.18fr]">
         <MotionSection {...fadeInUp}>
           <p className="mb-3 text-sm tracking-[0.24em] text-[#a26d62]">
@@ -393,6 +685,7 @@ export function MemoriesClient() {
           <MotionDiv
             {...fadeInUp}
             className="mt-8 rounded-3xl border border-black/[0.08] bg-white p-5 shadow-sm"
+            ref={formRef}
           >
             <form onSubmit={handleSubmit}>
               <div className="mb-5 flex items-center justify-between">
@@ -413,8 +706,8 @@ export function MemoriesClient() {
               <div className="space-y-4">
                 <label className="block">
                   <span className="text-sm font-medium">標題</span>
-                  <input
-                    className="mt-2 h-11 w-full rounded-2xl border border-black/[0.1] bg-[#fbfaf8] px-4 text-sm outline-none focus:border-black/[0.22]"
+                  <textarea
+                    className="mt-2 min-h-24 w-full resize-none rounded-2xl border border-black/[0.1] bg-[#fbfaf8] px-4 py-3 text-sm leading-6 outline-none focus:border-black/[0.22]"
                     onChange={(event) =>
                       setForm((current) => ({
                         ...current,
@@ -445,17 +738,85 @@ export function MemoriesClient() {
 
                 <label className="block">
                   <span className="text-sm font-medium">圖片網址</span>
+                  <div className="mt-2 space-y-2">
+                    {photoUrlFields.map((url, index) => (
+                      <div className="flex gap-2" key={index}>
+                        <input
+                          className="h-11 min-w-0 flex-1 rounded-2xl border border-black/[0.1] bg-[#fbfaf8] px-4 text-sm outline-none focus:border-black/[0.22]"
+                          onChange={(event) =>
+                            updatePhotoUrl(index, event.target.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              addPhotoUrl();
+                            }
+                          }}
+                          placeholder={`第 ${index + 1} 張照片網址`}
+                          type="url"
+                          value={url}
+                        />
+                        {photoUrlFields.length > 1 ? (
+                          <button
+                            aria-label="移除照片網址"
+                            className="inline-flex size-11 shrink-0 items-center justify-center rounded-full border border-[#f0c8c0] text-[#a13d2d] transition hover:border-[#d79b90]"
+                            onClick={() => removePhotoUrl(index)}
+                            type="button"
+                          >
+                            <X size={15} />
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    className="mt-3 inline-flex h-10 items-center gap-2 rounded-full border border-black/[0.08] px-4 text-sm font-medium transition hover:border-black/[0.18]"
+                    onClick={addPhotoUrl}
+                    type="button"
+                  >
+                    <Plus size={15} />
+                    新增一張照片
+                  </button>
+                  <span className="mt-2 block text-xs leading-5 text-[#8a8379]">
+                    一行放一張照片網址；第一張會當成回憶封面。
+                  </span>
+                </label>
+
+                <label className="block rounded-2xl border border-dashed border-black/[0.14] bg-[#fbfaf8] p-4">
+                  <span className="text-sm font-medium">從裝置選擇照片</span>
+                  <p className="mt-1 text-xs leading-5 text-[#8a8379]">
+                    可一次選多張。手機會開啟相簿選擇器，只會讀取你選的照片。
+                  </p>
                   <input
-                    className="mt-2 h-11 w-full rounded-2xl border border-black/[0.1] bg-[#fbfaf8] px-4 text-sm outline-none focus:border-black/[0.22]"
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        imageUrl: event.target.value,
-                      }))
-                    }
-                    placeholder="https://..."
-                    type="url"
-                    value={form.imageUrl}
+                    accept="image/*"
+                    className="mt-3 block w-full text-sm text-[#756e66] file:mr-4 file:h-9 file:rounded-full file:border-0 file:bg-[#1f1f1d] file:px-4 file:text-sm file:font-medium file:text-white"
+                    disabled={uploading || isDemoMode}
+                    multiple
+                    onChange={handlePhotoUpload}
+                    type="file"
+                  />
+                  {uploading ? (
+                    <p className="mt-2 text-xs leading-5 text-[#756e66]">
+                      照片上傳中...
+                    </p>
+                  ) : null}
+                  {isDemoMode ? (
+                    <p className="mt-2 text-xs leading-5 text-[#a26d62]">
+                      直接上傳需要先完成 Supabase 登入設定。
+                    </p>
+                  ) : null}
+                </label>
+
+                <label className="block rounded-2xl border border-dashed border-black/[0.14] bg-[#fbfaf8] p-4">
+                  <span className="text-sm font-medium">從照片讀取定位</span>
+                  <p className="mt-1 text-xs leading-5 text-[#8a8379]">
+                    選擇手機原始照片，若照片內含 GPS，會自動填入下方經緯度。
+                  </p>
+                  <input
+                    accept="image/*"
+                    className="mt-3 block w-full text-sm text-[#756e66] file:mr-4 file:h-9 file:rounded-full file:border-0 file:bg-[#1f1f1d] file:px-4 file:text-sm file:font-medium file:text-white"
+                    onChange={handlePhotoLocationFile}
+                    type="file"
                   />
                 </label>
 
@@ -510,7 +871,7 @@ export function MemoriesClient() {
 
               <button
                 className="mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-[#1f1f1d] px-5 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={saving}
+                disabled={saving || uploading}
                 type="submit"
               >
                 {saving ? <Loader2 className="animate-spin" size={16} /> : null}
@@ -529,7 +890,11 @@ export function MemoriesClient() {
 
         <MotionSection {...fadeInUp} className="space-y-5">
           <MotionDiv {...fadeInUp}>
-            <MemoryMap memories={orderedMemories} />
+            <MemoryMap
+              memories={orderedMemories}
+              onDeleteMemory={deleteMemory}
+              onEditMemory={startEdit}
+            />
           </MotionDiv>
 
           {loading ? (
@@ -548,64 +913,58 @@ export function MemoriesClient() {
             </div>
           ) : null}
 
-          {orderedMemories.map((memory) => (
-            <MotionArticle
-              {...fadeInUp}
-              {...softHover}
-              className="overflow-hidden rounded-3xl border border-black/[0.08] bg-white shadow-sm"
-              key={memory.id}
-            >
-              {memory.photos[0]?.image_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  alt={memory.title}
-                  className="h-60 w-full object-cover"
-                  src={memory.photos[0].image_url}
+          {orderedMemories.map((memory) => {
+            return (
+              <MotionArticle
+                {...fadeInUp}
+                {...softHover}
+                className="overflow-hidden rounded-3xl border border-black/[0.08] bg-white shadow-sm"
+                key={memory.id}
+              >
+                <MemoryCover
+                  memory={memory}
+                  photoCount={memory.photos.length}
                 />
-              ) : (
-                <div className="flex h-40 items-center justify-center bg-[#ebe6dd] text-[#8a8379]">
-                  <ImageIcon size={28} />
-                </div>
-              )}
-              <div className="p-5">
-                <div className="mb-3 flex flex-wrap items-center gap-3 text-sm text-[#8a8379]">
-                  <span className="inline-flex items-center gap-2">
-                    <CalendarDays size={16} />
-                    {formatDate(memory.memory_date)}
-                  </span>
-                  {memory.latitude != null && memory.longitude != null ? (
+                <div className="p-5">
+                  <div className="mb-3 flex flex-wrap items-center gap-3 text-sm text-[#8a8379]">
                     <span className="inline-flex items-center gap-2">
-                      <MapPin size={16} />
-                      {memory.latitude.toFixed(4)},{" "}
-                      {memory.longitude.toFixed(4)}
+                      <CalendarDays size={16} />
+                      {formatDate(memory.memory_date)}
                     </span>
-                  ) : null}
+                    {memory.latitude != null && memory.longitude != null ? (
+                      <span className="inline-flex items-center gap-2">
+                        <MapPin size={16} />
+                        {memory.latitude.toFixed(4)},{" "}
+                        {memory.longitude.toFixed(4)}
+                      </span>
+                    ) : null}
+                  </div>
+                  <h2 className="text-2xl font-semibold">{memory.title}</h2>
+                  <p className="mt-3 leading-7 whitespace-pre-line text-[#68625b]">
+                    {memory.content || "沒有描述。"}
+                  </p>
+                  <div className="mt-5 flex gap-2">
+                    <button
+                      className="inline-flex h-10 items-center gap-2 rounded-full border border-black/[0.08] px-4 text-sm font-medium transition hover:border-black/[0.18]"
+                      onClick={() => startEdit(memory)}
+                      type="button"
+                    >
+                      <Pencil size={15} />
+                      修改
+                    </button>
+                    <button
+                      className="inline-flex h-10 items-center gap-2 rounded-full border border-[#f0c8c0] px-4 text-sm font-medium text-[#a13d2d] transition hover:border-[#d79b90]"
+                      onClick={() => deleteMemory(memory)}
+                      type="button"
+                    >
+                      <Trash2 size={15} />
+                      刪除
+                    </button>
+                  </div>
                 </div>
-                <h2 className="text-2xl font-semibold">{memory.title}</h2>
-                <p className="mt-3 leading-7 whitespace-pre-line text-[#68625b]">
-                  {memory.content || "沒有描述。"}
-                </p>
-                <div className="mt-5 flex gap-2">
-                  <button
-                    className="inline-flex h-10 items-center gap-2 rounded-full border border-black/[0.08] px-4 text-sm font-medium transition hover:border-black/[0.18]"
-                    onClick={() => startEdit(memory)}
-                    type="button"
-                  >
-                    <Pencil size={15} />
-                    修改
-                  </button>
-                  <button
-                    className="inline-flex h-10 items-center gap-2 rounded-full border border-[#f0c8c0] px-4 text-sm font-medium text-[#a13d2d] transition hover:border-[#d79b90]"
-                    onClick={() => deleteMemory(memory)}
-                    type="button"
-                  >
-                    <Trash2 size={15} />
-                    刪除
-                  </button>
-                </div>
-              </div>
-            </MotionArticle>
-          ))}
+              </MotionArticle>
+            );
+          })}
         </MotionSection>
       </main>
     </MotionDiv>

@@ -3,6 +3,10 @@
 
 create extension if not exists "pgcrypto";
 
+insert into storage.buckets (id, name, public)
+values ('memory-photos', 'memory-photos', true)
+on conflict (id) do nothing;
+
 create table if not exists public.users (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text,
@@ -32,9 +36,15 @@ create table if not exists public.photos (
   user_id uuid not null references public.users(id) on delete cascade,
   image_url text not null,
   caption text,
+  latitude double precision,
+  longitude double precision,
   sort_order integer not null default 0,
   created_at timestamptz not null default now()
 );
+
+alter table public.photos
+  add column if not exists latitude double precision,
+  add column if not exists longitude double precision;
 
 create table if not exists public.bucket_list (
   id uuid primary key default gen_random_uuid(),
@@ -73,6 +83,9 @@ create index if not exists memories_coordinates_idx
 create index if not exists photos_memory_id_sort_order_idx
   on public.photos(memory_id, sort_order);
 create index if not exists photos_user_id_idx on public.photos(user_id);
+create index if not exists photos_coordinates_idx
+  on public.photos(latitude, longitude)
+  where latitude is not null and longitude is not null;
 create index if not exists bucket_list_user_id_status_idx
   on public.bucket_list(user_id, status);
 create index if not exists timeline_user_id_event_date_idx
@@ -153,3 +166,36 @@ create policy "Users can manage own timeline"
 on public.timeline for all
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
+
+drop policy if exists "Users can read memory photos" on storage.objects;
+create policy "Users can read memory photos"
+on storage.objects for select
+using (bucket_id = 'memory-photos');
+
+drop policy if exists "Users can upload own memory photos" on storage.objects;
+create policy "Users can upload own memory photos"
+on storage.objects for insert
+with check (
+  bucket_id = 'memory-photos'
+  and auth.uid()::text = (storage.foldername(name))[1]
+);
+
+drop policy if exists "Users can update own memory photos" on storage.objects;
+create policy "Users can update own memory photos"
+on storage.objects for update
+using (
+  bucket_id = 'memory-photos'
+  and auth.uid()::text = (storage.foldername(name))[1]
+)
+with check (
+  bucket_id = 'memory-photos'
+  and auth.uid()::text = (storage.foldername(name))[1]
+);
+
+drop policy if exists "Users can delete own memory photos" on storage.objects;
+create policy "Users can delete own memory photos"
+on storage.objects for delete
+using (
+  bucket_id = 'memory-photos'
+  and auth.uid()::text = (storage.foldername(name))[1]
+);

@@ -161,7 +161,7 @@ export default function Home() {
                 >
                   <ImageIcon className="mb-4 text-[#8a735b]" size={18} />
                   <p className="text-3xl font-semibold">42</p>
-                  <p className="mt-1 text-sm text-[#7a736b]">收藏的回憶</p>
+                  <p className="mt-1 text-sm text-[#7a736b]">照片數</p>
                 </MotionDiv>
               </div>
 
