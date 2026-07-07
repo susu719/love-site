@@ -1,4 +1,4 @@
-﻿-- Run this once in Supabase SQL Editor to support two Google accounts sharing one space.
+-- Run this once in Supabase SQL Editor to support two Google accounts sharing one space.
 
 create extension if not exists "pgcrypto";
 
