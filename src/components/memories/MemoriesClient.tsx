@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
   Check,
+  ChevronDown,
   Image as ImageIcon,
   Loader2,
   LogOut,
@@ -48,6 +49,18 @@ type MemoryForm = {
   longitude: string;
 };
 
+type DailyMessage = {
+  id: string;
+  content: string;
+  date: string;
+};
+
+type WishItem = {
+  id: string;
+  done: boolean;
+  title: string;
+};
+
 const emptyForm: MemoryForm = {
   title: "",
   memoryDate: new Date().toISOString().slice(0, 10),
@@ -85,10 +98,27 @@ const demoMemories: Memory[] = [
   },
 ];
 
-const dailyNote =
-  "今天也想把一點點時間留給你。晚點一起散步嗎？";
+const defaultDailyMessages: DailyMessage[] = [
+  {
+    id: "message-1",
+    content: "今天也想把一點點時間留給你。晚點一起散步嗎？",
+    date: new Date().toISOString().slice(0, 10),
+  },
+  {
+    id: "message-2",
+    content: "把普通的一天也存起來，之後回頭看會很可愛。",
+    date: "2026-07-06",
+  },
+];
 
-const wishes = ["去海邊看日出", "做一本年度回憶冊", "找一家固定約會的咖啡店"];
+const defaultWishes: WishItem[] = [
+  { id: "wish-1", done: false, title: "去海邊看日出" },
+  { id: "wish-2", done: false, title: "做一本年度回憶冊" },
+  { id: "wish-3", done: false, title: "找一家固定約會的咖啡店" },
+];
+
+const dailyMessagesKey = "love-site.daily-messages";
+const wishesKey = "love-site.wishes";
 
 function formatDate(date: string) {
   return new Intl.DateTimeFormat("zh-Hant", {
@@ -253,6 +283,13 @@ export function MemoriesClient() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
+  const [isMessagesOpen, setIsMessagesOpen] = useState(false);
+  const [isWishesOpen, setIsWishesOpen] = useState(false);
+  const [dailyMessages, setDailyMessages] =
+    useState<DailyMessage[]>(defaultDailyMessages);
+  const [newDailyMessage, setNewDailyMessage] = useState("");
+  const [wishes, setWishes] = useState<WishItem[]>(defaultWishes);
+  const [newWish, setNewWish] = useState("");
   const formRef = useRef<HTMLDivElement>(null);
 
   const isDemoMode = !isSupabaseConfigured || !user;
@@ -261,6 +298,7 @@ export function MemoriesClient() {
     user?.user_metadata.name ??
     user?.email ??
     "已登入";
+  const todayMessage = dailyMessages[0];
 
   const orderedMemories = useMemo(
     () =>
@@ -297,6 +335,19 @@ export function MemoriesClient() {
     return () => {
       subscription.unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    const savedMessages = window.localStorage.getItem(dailyMessagesKey);
+    const savedWishes = window.localStorage.getItem(wishesKey);
+
+    if (savedMessages) {
+      setDailyMessages(JSON.parse(savedMessages) as DailyMessage[]);
+    }
+
+    if (savedWishes) {
+      setWishes(JSON.parse(savedWishes) as WishItem[]);
+    }
   }, []);
 
   useEffect(() => {
@@ -462,6 +513,72 @@ export function MemoriesClient() {
     setUser(null);
     setMemories(demoMemories);
     setMessage("已登出，現在回到 Demo 模式。");
+  }
+
+  function saveDailyMessages(nextMessages: DailyMessage[]) {
+    setDailyMessages(nextMessages);
+    window.localStorage.setItem(dailyMessagesKey, JSON.stringify(nextMessages));
+  }
+
+  function addDailyMessage(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!newDailyMessage.trim()) {
+      return;
+    }
+
+    saveDailyMessages([
+      {
+        id: crypto.randomUUID(),
+        content: newDailyMessage.trim(),
+        date: new Date().toISOString().slice(0, 10),
+      },
+      ...dailyMessages,
+    ]);
+    setNewDailyMessage("");
+    setIsMessagesOpen(true);
+  }
+
+  function deleteDailyMessage(id: string) {
+    saveDailyMessages(
+      dailyMessages.filter((dailyMessage) => dailyMessage.id !== id),
+    );
+  }
+
+  function saveWishes(nextWishes: WishItem[]) {
+    setWishes(nextWishes);
+    window.localStorage.setItem(wishesKey, JSON.stringify(nextWishes));
+  }
+
+  function addWish(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!newWish.trim()) {
+      return;
+    }
+
+    saveWishes([
+      ...wishes,
+      {
+        id: crypto.randomUUID(),
+        done: false,
+        title: newWish.trim(),
+      },
+    ]);
+    setNewWish("");
+    setIsWishesOpen(true);
+  }
+
+  function toggleWish(id: string) {
+    saveWishes(
+      wishes.map((wish) =>
+        wish.id === id ? { ...wish, done: !wish.done } : wish,
+      ),
+    );
+  }
+
+  function deleteWish(id: string) {
+    saveWishes(wishes.filter((wish) => wish.id !== id));
   }
 
   function updatePhotoUrl(index: number, value: string) {
@@ -717,32 +834,171 @@ export function MemoriesClient() {
           {...fadeInUp}
           className="rounded-3xl border border-black/[0.08] bg-white p-5 shadow-sm"
         >
-          <div className="mb-4 flex items-center gap-2">
-            <MessageCircle size={18} className="text-[#a26d62]" />
-            <h2 className="font-semibold">今日留言</h2>
-          </div>
+          <button
+            className="mb-4 flex w-full items-center justify-between gap-3 text-left"
+            onClick={() => setIsMessagesOpen((current) => !current)}
+            type="button"
+          >
+            <span className="flex items-center gap-2">
+              <MessageCircle size={18} className="text-[#a26d62]" />
+              <span className="font-semibold">今日留言</span>
+            </span>
+            <ChevronDown
+              className={`text-[#8a8379] transition ${
+                isMessagesOpen ? "rotate-180" : ""
+              }`}
+              size={18}
+            />
+          </button>
           <p className="rounded-2xl bg-[#f7f5f1] p-4 text-sm leading-7 text-[#5d5751]">
-            「{dailyNote}」
+            「{todayMessage?.content ?? "今天還沒有留言。"}」
           </p>
+
+          {isMessagesOpen ? (
+            <div className="mt-4 space-y-4">
+              <form className="flex gap-2" onSubmit={addDailyMessage}>
+                <input
+                  className="h-11 min-w-0 flex-1 rounded-2xl border border-black/[0.1] bg-[#fbfaf8] px-4 text-sm outline-none focus:border-black/[0.22]"
+                  onChange={(event) => setNewDailyMessage(event.target.value)}
+                  placeholder="寫下今天想留給對方的話"
+                  value={newDailyMessage}
+                />
+                <button
+                  className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full bg-[#1f1f1d] px-4 text-sm font-medium text-white transition hover:bg-black"
+                  type="submit"
+                >
+                  <Plus size={15} />
+                  新增
+                </button>
+              </form>
+
+              <div className="space-y-2">
+                {dailyMessages.map((dailyMessage) => (
+                  <div
+                    className="rounded-2xl border border-black/[0.06] bg-[#fbfaf8] p-4"
+                    key={dailyMessage.id}
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <span className="text-xs text-[#8a8379]">
+                        {formatDate(dailyMessage.date)}
+                      </span>
+                      <button
+                        aria-label="刪除留言"
+                        className="inline-flex size-8 items-center justify-center rounded-full text-[#a13d2d] transition hover:bg-[#f8e8e4]"
+                        onClick={() => deleteDailyMessage(dailyMessage.id)}
+                        type="button"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    <p className="text-sm leading-7 text-[#5d5751]">
+                      {dailyMessage.content}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </MotionDiv>
 
         <MotionDiv
           {...fadeInUp}
           className="rounded-3xl border border-black/[0.08] bg-white p-5 shadow-sm"
         >
-          <h2 className="mb-4 font-semibold">願望清單</h2>
+          <button
+            className="mb-4 flex w-full items-center justify-between gap-3 text-left"
+            onClick={() => setIsWishesOpen((current) => !current)}
+            type="button"
+          >
+            <span className="font-semibold">願望清單</span>
+            <ChevronDown
+              className={`text-[#8a8379] transition ${
+                isWishesOpen ? "rotate-180" : ""
+              }`}
+              size={18}
+            />
+          </button>
           <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
             {wishes.map((wish) => (
-              <div className="flex items-center gap-3" key={wish}>
-                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#edf1ea] text-[#6f7d65]">
-                  <Check size={15} />
+              <div className="flex items-center gap-3" key={wish.id}>
+                <span
+                  className={`flex size-7 shrink-0 items-center justify-center rounded-full ${
+                    wish.done
+                      ? "bg-[#6f7d65] text-white"
+                      : "bg-[#edf1ea] text-[#6f7d65]"
+                  }`}
+                >
+                  {wish.done ? <Check size={15} /> : null}
                 </span>
-                <span className="text-sm leading-6 text-[#5d5751]">
-                  {wish}
+                <span
+                  className={`text-sm leading-6 text-[#5d5751] ${
+                    wish.done ? "line-through opacity-60" : ""
+                  }`}
+                >
+                  {wish.title}
                 </span>
               </div>
             ))}
           </div>
+
+          {isWishesOpen ? (
+            <div className="mt-4 space-y-4">
+              <form className="flex gap-2" onSubmit={addWish}>
+                <input
+                  className="h-11 min-w-0 flex-1 rounded-2xl border border-black/[0.1] bg-[#fbfaf8] px-4 text-sm outline-none focus:border-black/[0.22]"
+                  onChange={(event) => setNewWish(event.target.value)}
+                  placeholder="新增想一起完成的事"
+                  value={newWish}
+                />
+                <button
+                  className="inline-flex h-11 shrink-0 items-center gap-2 rounded-full bg-[#1f1f1d] px-4 text-sm font-medium text-white transition hover:bg-black"
+                  type="submit"
+                >
+                  <Plus size={15} />
+                  新增
+                </button>
+              </form>
+
+              <div className="space-y-2">
+                {wishes.map((wish) => (
+                  <div
+                    className="flex items-center gap-3 rounded-2xl border border-black/[0.06] bg-[#fbfaf8] p-3"
+                    key={wish.id}
+                  >
+                    <button
+                      aria-label={wish.done ? "標記未完成" : "標記完成"}
+                      className={`flex size-8 shrink-0 items-center justify-center rounded-full border transition ${
+                        wish.done
+                          ? "border-[#6f7d65] bg-[#6f7d65] text-white"
+                          : "border-black/[0.12] bg-white text-transparent hover:text-[#6f7d65]"
+                      }`}
+                      onClick={() => toggleWish(wish.id)}
+                      type="button"
+                    >
+                      <Check size={15} />
+                    </button>
+                    <span
+                      className={`min-w-0 flex-1 text-sm leading-6 ${
+                        wish.done
+                          ? "text-[#8a8379] line-through"
+                          : "text-[#5d5751]"
+                      }`}
+                    >
+                      {wish.title}
+                    </span>
+                    <button
+                      aria-label="刪除願望"
+                      className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-[#a13d2d] transition hover:bg-[#f8e8e4]"
+                      onClick={() => deleteWish(wish.id)}
+                      type="button"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </MotionDiv>
       </section>
 
