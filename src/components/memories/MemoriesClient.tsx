@@ -629,10 +629,7 @@ export function MemoriesClient() {
 
     if (!nestedSpace) {
       setSpace(null);
-      setMemories([]);
-      setDailyMessages(defaultDailyMessages);
-      setWishes(defaultWishes);
-      setLoading(false);
+      await loadPersonalUserData(currentUser);
       setSpaceLoading(false);
       return;
     }
@@ -834,6 +831,12 @@ export function MemoriesClient() {
 
       window.localStorage.setItem(wishesMigratedKey, "true");
     }
+  }
+
+  async function loadPersonalUserData(currentUser: User) {
+    await loadMemories(currentUser.id, null);
+    await loadDailyMessages(currentUser.id, null);
+    await loadWishes(currentUser.id, null);
   }
 
   async function syncUserData(currentUser: User, spaceId: string) {
@@ -1402,7 +1405,7 @@ export function MemoriesClient() {
                 <p className="text-sm leading-6 text-[#756e66]">
                   {space
                     ? "把這組邀請碼給另一半，對方登入後輸入就能看到同一份資料。"
-                    : "建立共同空間，或輸入另一半提供的邀請碼。"}
+                    : "你目前還是個人資料。先按建立共同空間，系統才會產生邀請碼。"}
                 </p>
               </div>
 
@@ -1429,6 +1432,10 @@ export function MemoriesClient() {
                 </div>
               ) : (
                 <div className="grid gap-3 lg:min-w-[26rem]">
+                  <div className="rounded-2xl border border-dashed border-black/[0.12] bg-[#fbfaf8] px-4 py-3 text-sm leading-6 text-[#756e66]">
+                    還沒有邀請碼。按下面的「建立共同空間」後，這裡會變成你的
+                    LOVE 邀請碼。
+                  </div>
                   <button
                     className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#1f1f1d] px-5 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={spaceLoading}
