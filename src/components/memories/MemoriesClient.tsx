@@ -4,10 +4,12 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays,
+  Check,
   Image as ImageIcon,
   Loader2,
   LogOut,
   MapPin,
+  MessageCircle,
   Pencil,
   Plus,
   Save,
@@ -82,6 +84,11 @@ const demoMemories: Memory[] = [
     photos: [],
   },
 ];
+
+const dailyNote =
+  "今天也想把一點點時間留給你。晚點一起散步嗎？";
+
+const wishes = ["去海邊看日出", "做一本年度回憶冊", "找一家固定約會的咖啡店"];
 
 function formatDate(date: string) {
   return new Intl.DateTimeFormat("zh-Hant", {
@@ -703,6 +710,40 @@ export function MemoriesClient() {
 
       <section className="mx-auto max-w-6xl px-5 pt-8 sm:px-8">
         <RelationshipStats />
+      </section>
+
+      <section className="mx-auto grid max-w-6xl gap-4 px-5 pt-5 sm:px-8 lg:grid-cols-[0.9fr_1.1fr]">
+        <MotionDiv
+          {...fadeInUp}
+          className="rounded-3xl border border-black/[0.08] bg-white p-5 shadow-sm"
+        >
+          <div className="mb-4 flex items-center gap-2">
+            <MessageCircle size={18} className="text-[#a26d62]" />
+            <h2 className="font-semibold">今日留言</h2>
+          </div>
+          <p className="rounded-2xl bg-[#f7f5f1] p-4 text-sm leading-7 text-[#5d5751]">
+            「{dailyNote}」
+          </p>
+        </MotionDiv>
+
+        <MotionDiv
+          {...fadeInUp}
+          className="rounded-3xl border border-black/[0.08] bg-white p-5 shadow-sm"
+        >
+          <h2 className="mb-4 font-semibold">願望清單</h2>
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+            {wishes.map((wish) => (
+              <div className="flex items-center gap-3" key={wish}>
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#edf1ea] text-[#6f7d65]">
+                  <Check size={15} />
+                </span>
+                <span className="text-sm leading-6 text-[#5d5751]">
+                  {wish}
+                </span>
+              </div>
+            ))}
+          </div>
+        </MotionDiv>
       </section>
 
       <main className="mx-auto grid max-w-6xl gap-8 px-5 py-10 sm:px-8 xl:grid-cols-[0.82fr_1.18fr]">
