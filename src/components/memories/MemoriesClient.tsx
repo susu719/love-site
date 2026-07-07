@@ -119,6 +119,8 @@ const defaultWishes: WishItem[] = [
 
 const dailyMessagesKey = "love-site.daily-messages";
 const wishesKey = "love-site.wishes";
+const maxUploadImageSize = 1600;
+const uploadImageQuality = 0.82;
 
 function migrationKey(userId: string, dataKey: string) {
   return `${dataKey}.migrated.${userId}`;
@@ -221,6 +223,61 @@ function getFileExtension(file: File) {
   return file.name.split(".").pop()?.toLowerCase() || "jpg";
 }
 
+function getCompressedFileName(fileName: string) {
+  const baseName = fileName.replace(/\.[^.]+$/, "");
+  return `${baseName || "photo"}.jpg`;
+}
+
+function loadImageFromBlob(blob: Blob) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const imageUrl = URL.createObjectURL(blob);
+    const image = new Image();
+
+    image.onload = () => {
+      URL.revokeObjectURL(imageUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(imageUrl);
+      reject(new Error("Image failed to load"));
+    };
+    image.src = imageUrl;
+  });
+}
+
+async function compressImageFile(file: File) {
+  const image = await loadImageFromBlob(file);
+  const scale = Math.min(
+    1,
+    maxUploadImageSize / Math.max(image.naturalWidth, image.naturalHeight),
+  );
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    return file;
+  }
+
+  canvas.width = width;
+  canvas.height = height;
+  context.drawImage(image, 0, 0, width, height);
+
+  const compressedBlob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, "image/jpeg", uploadImageQuality);
+  });
+
+  if (!compressedBlob || compressedBlob.size >= file.size) {
+    return file;
+  }
+
+  return new File([compressedBlob], getCompressedFileName(file.name), {
+    lastModified: file.lastModified,
+    type: "image/jpeg",
+  });
+}
+
 async function isHeicFile(file: File) {
   const extension = getFileExtension(file);
 
@@ -240,22 +297,24 @@ async function isHeicFile(file: File) {
 
 async function prepareImageForUpload(file: File) {
   if (!(await isHeicFile(file))) {
-    return file;
+    return compressImageFile(file);
   }
 
   const heic2any = (await import("heic2any")).default;
   const converted = await heic2any({
     blob: file,
-    quality: 0.9,
+    quality: uploadImageQuality,
     toType: "image/jpeg",
   });
   const convertedBlob = Array.isArray(converted) ? converted[0] : converted;
   const jpgName = file.name.replace(/\.(heic|heif|png)$/i, ".jpg");
 
-  return new File([convertedBlob], jpgName, {
+  const convertedFile = new File([convertedBlob], jpgName, {
     lastModified: file.lastModified,
     type: "image/jpeg",
   });
+
+  return compressImageFile(convertedFile);
 }
 
 function isBrowserDisplayableImage(url: string) {
@@ -451,7 +510,7 @@ export function MemoriesClient() {
     }
 
     setUploading(true);
-    setMessage(`正在上傳 ${files.length} 張照片...`);
+    setMessage(`正在壓縮並上傳 ${files.length} 張照片...`);
 
     const uploadedUrls: string[] = [];
 
