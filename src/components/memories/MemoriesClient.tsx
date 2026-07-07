@@ -264,9 +264,11 @@ export function MemoriesClient() {
       return;
     }
 
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user);
-      if (!data.user) {
+    supabase.auth.getSession().then(({ data }) => {
+      const sessionUser = data.session?.user ?? null;
+
+      setUser(sessionUser);
+      if (!sessionUser) {
         setMemories(demoMemories);
         setLoading(false);
         setMessage("請先登入。登入前可以用 Demo 模式試操作。");
