@@ -38,6 +38,10 @@ const defaultSettings: RelationshipSettings = {
 
 const relationshipSettingsKey = "love-site.relationship-settings";
 
+function migrationKey(userId: string) {
+  return `${relationshipSettingsKey}.migrated.${userId}`;
+}
+
 function createId() {
   return crypto.randomUUID();
 }
@@ -135,6 +139,7 @@ export function RelationshipStats() {
   const [isEditing, setIsEditing] = useState(false);
   const [memoryCount, setMemoryCount] = useState(0);
   const [photoCount, setPhotoCount] = useState(0);
+  const [userId, setUserId] = useState<string | null>(null);
 
   const daysTogether = useMemo(
     () => getDaysBetween(settings.startDate),
@@ -167,10 +172,19 @@ export function RelationshipStats() {
       } = await supabase.auth.getUser();
 
       if (!user) {
+        setUserId(null);
         setMemoryCount(0);
         setPhotoCount(0);
         return;
       }
+
+      setUserId(user.id);
+      await supabase.from("users").upsert({
+        avatar_url: user.user_metadata.avatar_url ?? null,
+        display_name: user.user_metadata.full_name ?? user.email ?? "使用者",
+        id: user.id,
+      });
+      await syncRelationshipSettings(user.id);
 
       const [{ count: memories }, { count: photos }] = await Promise.all([
         supabase
@@ -190,12 +204,70 @@ export function RelationshipStats() {
     loadStats();
   }, []);
 
+  async function syncRelationshipSettings(nextUserId: string) {
+    if (!supabase) {
+      return;
+    }
+
+    const savedSettings = window.localStorage.getItem(relationshipSettingsKey);
+    const hasMigrated = window.localStorage.getItem(migrationKey(nextUserId));
+    const localSettings = savedSettings
+      ? normalizeSettings(JSON.parse(savedSettings))
+      : null;
+
+    const { data, error } = await supabase
+      .from("relationship_settings")
+      .select("start_date,anniversaries")
+      .eq("user_id", nextUserId)
+      .maybeSingle();
+
+    if (error) {
+      return;
+    }
+
+    if (!data && localSettings && !hasMigrated) {
+      await saveSettingsToSupabase(nextUserId, localSettings);
+      window.localStorage.setItem(migrationKey(nextUserId), "true");
+      setSettings(localSettings);
+      return;
+    }
+
+    if (data) {
+      setSettings(
+        normalizeSettings({
+          anniversaries: data.anniversaries,
+          startDate: data.start_date,
+        }),
+      );
+      window.localStorage.setItem(migrationKey(nextUserId), "true");
+    }
+  }
+
+  async function saveSettingsToSupabase(
+    nextUserId: string,
+    nextSettings: RelationshipSettings,
+  ) {
+    if (!supabase) {
+      return;
+    }
+
+    await supabase.from("relationship_settings").upsert({
+      anniversaries: nextSettings.anniversaries,
+      start_date: nextSettings.startDate,
+      user_id: nextUserId,
+    });
+  }
+
   function updateSettings(nextSettings: RelationshipSettings) {
     setSettings(nextSettings);
     window.localStorage.setItem(
       relationshipSettingsKey,
       JSON.stringify(nextSettings),
     );
+
+    if (userId) {
+      saveSettingsToSupabase(userId, nextSettings);
+    }
   }
 
   function updateAnniversary(id: string, nextValue: Partial<Anniversary>) {
