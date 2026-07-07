@@ -6,6 +6,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  Copy,
   Image as ImageIcon,
   Loader2,
   LogOut,
@@ -15,6 +16,7 @@ import {
   Plus,
   Save,
   Trash2,
+  Users,
   X,
 } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
@@ -59,6 +61,12 @@ type WishItem = {
   id: string;
   done: boolean;
   title: string;
+};
+
+type SharedSpace = {
+  id: string;
+  invite_code: string;
+  name: string;
 };
 
 const emptyForm: MemoryForm = {
@@ -124,6 +132,10 @@ const uploadImageQuality = 0.82;
 
 function migrationKey(userId: string, dataKey: string) {
   return `${dataKey}.migrated.${userId}`;
+}
+
+function createInviteCode() {
+  return `LOVE-${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
 function normalizeDailyMessages(value: unknown): DailyMessage[] {
@@ -416,6 +428,9 @@ export function MemoriesClient() {
   const [newDailyMessage, setNewDailyMessage] = useState("");
   const [wishes, setWishes] = useState<WishItem[]>(defaultWishes);
   const [newWish, setNewWish] = useState("");
+  const [space, setSpace] = useState<SharedSpace | null>(null);
+  const [spaceLoading, setSpaceLoading] = useState(false);
+  const [inviteCode, setInviteCode] = useState("");
   const formRef = useRef<HTMLDivElement>(null);
 
   const isDemoMode = !isSupabaseConfigured || !user;
@@ -425,6 +440,7 @@ export function MemoriesClient() {
     user?.email ??
     "已登入";
   const todayMessage = dailyMessages[0];
+  const activeSpaceId = space?.id ?? null;
 
   const orderedMemories = useMemo(
     () =>
@@ -481,7 +497,7 @@ export function MemoriesClient() {
       return;
     }
 
-    syncUserData(user);
+    loadUserSpace(user);
   }, [user]);
 
   async function handlePhotoLocationFile(
@@ -599,7 +615,179 @@ export function MemoriesClient() {
     });
   }
 
-  async function migrateLocalData(currentUser: User) {
+  async function loadUserSpace(currentUser: User) {
+    if (!supabase) {
+      return;
+    }
+
+    setSpaceLoading(true);
+    await ensureProfile(currentUser);
+
+    const { data, error } = await supabase
+      .from("space_members")
+      .select("space_id, spaces(id,name,invite_code)")
+      .eq("user_id", currentUser.id)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      setMessage(error.message);
+      setSpaceLoading(false);
+      return;
+    }
+
+    const nestedSpace = Array.isArray(data?.spaces)
+      ? data?.spaces[0]
+      : data?.spaces;
+
+    if (!nestedSpace) {
+      setSpace(null);
+      setMemories([]);
+      setDailyMessages(defaultDailyMessages);
+      setWishes(defaultWishes);
+      setLoading(false);
+      setSpaceLoading(false);
+      return;
+    }
+
+    const nextSpace = nestedSpace as SharedSpace;
+    setSpace(nextSpace);
+    await syncUserData(currentUser, nextSpace.id);
+    setSpaceLoading(false);
+  }
+
+  async function migratePersonalRowsToSpace(currentUser: User, spaceId: string) {
+    if (!supabase) {
+      return;
+    }
+
+    await Promise.all([
+      supabase
+        .from("memories")
+        .update({ space_id: spaceId })
+        .eq("user_id", currentUser.id)
+        .is("space_id", null),
+      supabase
+        .from("photos")
+        .update({ space_id: spaceId })
+        .eq("user_id", currentUser.id)
+        .is("space_id", null),
+      supabase
+        .from("daily_messages")
+        .update({ space_id: spaceId })
+        .eq("user_id", currentUser.id)
+        .is("space_id", null),
+      supabase
+        .from("bucket_list")
+        .update({ space_id: spaceId })
+        .eq("user_id", currentUser.id)
+        .is("space_id", null),
+      supabase
+        .from("relationship_settings")
+        .update({ space_id: spaceId })
+        .eq("user_id", currentUser.id)
+        .is("space_id", null),
+    ]);
+  }
+
+  async function createSharedSpace() {
+    if (!supabase || !user) {
+      return;
+    }
+
+    setSpaceLoading(true);
+    setMessage("");
+    await ensureProfile(user);
+
+    const { data: createdSpace, error: spaceError } = await supabase
+      .from("spaces")
+      .insert({
+        invite_code: createInviteCode(),
+        name: "兩個人的日常",
+        owner_id: user.id,
+      })
+      .select("id,name,invite_code")
+      .single();
+
+    if (spaceError) {
+      setMessage(spaceError.message);
+      setSpaceLoading(false);
+      return;
+    }
+
+    const { error: memberError } = await supabase.from("space_members").insert({
+      role: "owner",
+      space_id: createdSpace.id,
+      user_id: user.id,
+    });
+
+    if (memberError) {
+      setMessage(memberError.message);
+      setSpaceLoading(false);
+      return;
+    }
+
+    await migratePersonalRowsToSpace(user, createdSpace.id);
+    setSpace(createdSpace as SharedSpace);
+    await syncUserData(user, createdSpace.id);
+    setMessage("共同空間已建立，邀請碼可以給另一半加入。");
+    setSpaceLoading(false);
+  }
+
+  async function joinSharedSpace(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!supabase || !user || !inviteCode.trim()) {
+      return;
+    }
+
+    setSpaceLoading(true);
+    setMessage("");
+    await ensureProfile(user);
+
+    const normalizedCode = inviteCode.trim().toUpperCase();
+    const { data: foundSpace, error: findError } = await supabase
+      .from("spaces")
+      .select("id,name,invite_code")
+      .eq("invite_code", normalizedCode)
+      .maybeSingle();
+
+    if (findError || !foundSpace) {
+      setMessage("找不到這個邀請碼，請確認大小寫和數字。");
+      setSpaceLoading(false);
+      return;
+    }
+
+    const { error: memberError } = await supabase.from("space_members").insert({
+      role: "member",
+      space_id: foundSpace.id,
+      user_id: user.id,
+    });
+
+    if (memberError && !memberError.message.includes("duplicate")) {
+      setMessage(memberError.message);
+      setSpaceLoading(false);
+      return;
+    }
+
+    await migratePersonalRowsToSpace(user, foundSpace.id);
+    setInviteCode("");
+    setSpace(foundSpace as SharedSpace);
+    await syncUserData(user, foundSpace.id);
+    setMessage("已加入共同空間。");
+    setSpaceLoading(false);
+  }
+
+  async function copyInviteCode() {
+    if (!space?.invite_code) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(space.invite_code);
+    setMessage("邀請碼已複製。");
+  }
+
+  async function migrateLocalData(currentUser: User, spaceId: string) {
     if (!supabase) {
       return;
     }
@@ -621,6 +809,7 @@ export function MemoriesClient() {
         const { error } = await supabase.from("daily_messages").insert(
           messagesToMigrate.map((localMessage) => ({
             user_id: currentUser.id,
+            space_id: spaceId,
             content: localMessage.content,
             message_date: localMessage.message_date,
           })),
@@ -643,6 +832,7 @@ export function MemoriesClient() {
         const { error } = await supabase.from("bucket_list").insert(
           wishesToMigrate.map((wish) => ({
             user_id: currentUser.id,
+            space_id: spaceId,
             title: wish.title,
             status: wish.done ? "completed" : "pending",
             completed_at: wish.done ? new Date().toISOString() : null,
@@ -659,14 +849,14 @@ export function MemoriesClient() {
     }
   }
 
-  async function syncUserData(currentUser: User) {
-    await migrateLocalData(currentUser);
-    await loadMemories(currentUser.id);
-    await loadDailyMessages(currentUser.id);
-    await loadWishes(currentUser.id);
+  async function syncUserData(currentUser: User, spaceId: string) {
+    await migrateLocalData(currentUser, spaceId);
+    await loadMemories(currentUser.id, spaceId);
+    await loadDailyMessages(currentUser.id, spaceId);
+    await loadWishes(currentUser.id, spaceId);
   }
 
-  async function loadMemories(userId: string) {
+  async function loadMemories(userId: string, spaceId: string | null) {
     if (!supabase) {
       return;
     }
@@ -679,7 +869,7 @@ export function MemoriesClient() {
       .select(
         "id,title,content,memory_date,latitude,longitude,photos(id,image_url,caption,latitude,longitude)",
       )
-      .eq("user_id", userId)
+      .eq(spaceId ? "space_id" : "user_id", spaceId ?? userId)
       .order("memory_date", { ascending: false });
 
     if (error) {
@@ -692,7 +882,7 @@ export function MemoriesClient() {
     setLoading(false);
   }
 
-  async function loadDailyMessages(userId: string) {
+  async function loadDailyMessages(userId: string, spaceId: string | null) {
     if (!supabase) {
       return;
     }
@@ -700,7 +890,7 @@ export function MemoriesClient() {
     const { data, error } = await supabase
       .from("daily_messages")
       .select("id,content,message_date")
-      .eq("user_id", userId)
+      .eq(spaceId ? "space_id" : "user_id", spaceId ?? userId)
       .order("message_date", { ascending: false })
       .order("created_at", { ascending: false });
 
@@ -712,7 +902,7 @@ export function MemoriesClient() {
     setDailyMessages((data ?? []) as DailyMessage[]);
   }
 
-  async function loadWishes(userId: string) {
+  async function loadWishes(userId: string, spaceId: string | null) {
     if (!supabase) {
       return;
     }
@@ -720,7 +910,7 @@ export function MemoriesClient() {
     const { data, error } = await supabase
       .from("bucket_list")
       .select("id,title,status")
-      .eq("user_id", userId)
+      .eq(spaceId ? "space_id" : "user_id", spaceId ?? userId)
       .order("created_at", { ascending: true });
 
     if (error) {
@@ -770,6 +960,7 @@ export function MemoriesClient() {
 
       const { error } = await supabase.from("daily_messages").insert({
         user_id: user.id,
+        space_id: activeSpaceId,
         content: newDailyMessage.trim(),
         message_date: new Date().toISOString().slice(0, 10),
       });
@@ -781,7 +972,7 @@ export function MemoriesClient() {
 
       setNewDailyMessage("");
       setIsMessagesOpen(true);
-      await loadDailyMessages(user.id);
+      await loadDailyMessages(user.id, activeSpaceId);
       return;
     }
 
@@ -810,7 +1001,7 @@ export function MemoriesClient() {
         return;
       }
 
-      await loadDailyMessages(user.id);
+      await loadDailyMessages(user.id, activeSpaceId);
       return;
     }
 
@@ -836,6 +1027,7 @@ export function MemoriesClient() {
 
       const { error } = await supabase.from("bucket_list").insert({
         user_id: user.id,
+        space_id: activeSpaceId,
         title: newWish.trim(),
         status: "pending",
       });
@@ -847,7 +1039,7 @@ export function MemoriesClient() {
 
       setNewWish("");
       setIsWishesOpen(true);
-      await loadWishes(user.id);
+      await loadWishes(user.id, activeSpaceId);
       return;
     }
 
@@ -885,7 +1077,7 @@ export function MemoriesClient() {
         return;
       }
 
-      await loadWishes(user.id);
+      await loadWishes(user.id, activeSpaceId);
       return;
     }
 
@@ -909,7 +1101,7 @@ export function MemoriesClient() {
         return;
       }
 
-      await loadWishes(user.id);
+      await loadWishes(user.id, activeSpaceId);
       return;
     }
 
@@ -996,6 +1188,7 @@ export function MemoriesClient() {
       memory_date: form.memoryDate,
       latitude: parseCoordinate(form.latitude),
       longitude: parseCoordinate(form.longitude),
+      space_id: activeSpaceId,
     };
 
     if (editingId) {
@@ -1011,7 +1204,7 @@ export function MemoriesClient() {
         return;
       }
 
-      await replacePhoto(editingId, user.id, form.imageUrl);
+      await replacePhoto(editingId, user.id, activeSpaceId, form.imageUrl);
     } else {
       const { data, error } = await supabase
         .from("memories")
@@ -1028,10 +1221,10 @@ export function MemoriesClient() {
         return;
       }
 
-      await replacePhoto(data.id, user.id, form.imageUrl);
+      await replacePhoto(data.id, user.id, activeSpaceId, form.imageUrl);
     }
 
-    await loadMemories(user.id);
+    await loadMemories(user.id, activeSpaceId);
     resetForm();
     setSaving(false);
   }
@@ -1039,6 +1232,7 @@ export function MemoriesClient() {
   async function replacePhoto(
     memoryId: string,
     userId: string,
+    spaceId: string | null,
     imageUrl: string,
   ) {
     if (!supabase) {
@@ -1067,6 +1261,7 @@ export function MemoriesClient() {
       imageUrls.map((url, index) => ({
         memory_id: memoryId,
         user_id: userId,
+        space_id: spaceId,
         image_url: url,
         latitude: parseCoordinate(form.latitude),
         longitude: parseCoordinate(form.longitude),
@@ -1160,7 +1355,7 @@ export function MemoriesClient() {
       return;
     }
 
-    await loadMemories(user.id);
+    await loadMemories(user.id, activeSpaceId);
   }
 
   return (
@@ -1202,8 +1397,78 @@ export function MemoriesClient() {
       </header>
 
       <section className="mx-auto max-w-6xl px-5 pt-8 sm:px-8">
-        <RelationshipStats />
+        <RelationshipStats spaceId={activeSpaceId} />
       </section>
+
+      {!isDemoMode ? (
+        <section className="mx-auto max-w-6xl px-5 pt-5 sm:px-8">
+          <MotionDiv
+            {...fadeInUp}
+            className="rounded-3xl border border-black/[0.08] bg-white p-5 shadow-sm"
+          >
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="mb-2 flex items-center gap-2">
+                  <Users size={18} className="text-[#a26d62]" />
+                  <h2 className="font-semibold">共同空間</h2>
+                </div>
+                <p className="text-sm leading-6 text-[#756e66]">
+                  {space
+                    ? "把這組邀請碼給另一半，對方登入後輸入就能看到同一份資料。"
+                    : "建立共同空間，或輸入另一半提供的邀請碼。"}
+                </p>
+              </div>
+
+              {space ? (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <span className="rounded-full border border-black/[0.08] bg-[#fbfaf8] px-4 py-2 text-sm font-semibold tracking-[0.18em]">
+                    {space.invite_code}
+                  </span>
+                  <button
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-black/[0.08] px-4 text-sm font-medium transition hover:border-black/[0.18]"
+                    onClick={copyInviteCode}
+                    type="button"
+                  >
+                    <Copy size={15} />
+                    複製邀請碼
+                  </button>
+                </div>
+              ) : (
+                <div className="grid gap-3 lg:min-w-[26rem]">
+                  <button
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#1f1f1d] px-5 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={spaceLoading}
+                    onClick={createSharedSpace}
+                    type="button"
+                  >
+                    {spaceLoading ? (
+                      <Loader2 className="animate-spin" size={16} />
+                    ) : (
+                      <Plus size={16} />
+                    )}
+                    建立共同空間
+                  </button>
+                  <form className="flex gap-2" onSubmit={joinSharedSpace}>
+                    <input
+                      className="h-11 min-w-0 flex-1 rounded-full border border-black/[0.1] bg-[#fbfaf8] px-4 text-sm uppercase outline-none focus:border-black/[0.22]"
+                      onChange={(event) => setInviteCode(event.target.value)}
+                      placeholder="輸入邀請碼，例如 LOVE-8392"
+                      value={inviteCode}
+                    />
+                    <button
+                      className="inline-flex h-11 shrink-0 items-center justify-center rounded-full border border-black/[0.08] px-4 text-sm font-medium transition hover:border-black/[0.18]"
+                      disabled={spaceLoading}
+                      type="submit"
+                    >
+                      加入
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+          </MotionDiv>
+        </section>
+      ) : null}
 
       <section className="mx-auto grid max-w-6xl gap-4 px-5 pt-5 sm:px-8 lg:grid-cols-[0.9fr_1.1fr]">
         <MotionDiv

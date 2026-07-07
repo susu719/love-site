@@ -134,7 +134,7 @@ function normalizeSettings(value: unknown): RelationshipSettings {
   };
 }
 
-export function RelationshipStats() {
+export function RelationshipStats({ spaceId }: { spaceId?: string | null }) {
   const [settings, setSettings] =
     useState<RelationshipSettings>(defaultSettings);
   const [isEditing, setIsEditing] = useState(false);
@@ -217,11 +217,11 @@ export function RelationshipStats() {
         supabase
           .from("memories")
           .select("id", { count: "exact", head: true })
-          .eq("user_id", user.id),
+          .eq(spaceId ? "space_id" : "user_id", spaceId ?? user.id),
         supabase
           .from("photos")
           .select("id", { count: "exact", head: true })
-          .eq("user_id", user.id),
+          .eq(spaceId ? "space_id" : "user_id", spaceId ?? user.id),
       ]);
 
       setMemoryCount(memories ?? 0);
@@ -229,7 +229,7 @@ export function RelationshipStats() {
     }
 
     loadStats();
-  }, [user]);
+  }, [spaceId, user]);
 
   async function syncRelationshipSettings(nextUserId: string) {
     if (!supabase) {
@@ -245,7 +245,7 @@ export function RelationshipStats() {
     const { data, error } = await supabase
       .from("relationship_settings")
       .select("start_date,anniversaries")
-      .eq("user_id", nextUserId)
+      .eq(spaceId ? "space_id" : "user_id", spaceId ?? nextUserId)
       .maybeSingle();
 
     if (error) {
@@ -283,11 +283,15 @@ export function RelationshipStats() {
       return;
     }
 
-    const { error } = await supabase.from("relationship_settings").upsert({
-      anniversaries: nextSettings.anniversaries,
-      start_date: nextSettings.startDate,
-      user_id: nextUserId,
-    });
+    const { error } = await supabase.from("relationship_settings").upsert(
+      {
+        anniversaries: nextSettings.anniversaries,
+        space_id: spaceId ?? null,
+        start_date: nextSettings.startDate,
+        user_id: nextUserId,
+      },
+      spaceId ? { onConflict: "space_id" } : undefined,
+    );
 
     if (error) {
       setSyncMessage(
