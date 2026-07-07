@@ -11,6 +11,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import type { User } from "@supabase/supabase-js";
 import { MotionDiv, softHover } from "@/components/shared/Motion";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
@@ -139,7 +140,9 @@ export function RelationshipStats() {
   const [isEditing, setIsEditing] = useState(false);
   const [memoryCount, setMemoryCount] = useState(0);
   const [photoCount, setPhotoCount] = useState(0);
+  const [user, setUser] = useState<User | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [syncMessage, setSyncMessage] = useState("");
 
   const daysTogether = useMemo(
     () => getDaysBetween(settings.startDate),
@@ -160,16 +163,40 @@ export function RelationshipStats() {
   }, []);
 
   useEffect(() => {
+    if (!supabase || !isSupabaseConfigured) {
+      setMemoryCount(0);
+      setPhotoCount(0);
+      return;
+    }
+
+    async function loadUser() {
+      const {
+        data: { session },
+      } = await supabase!.auth.getSession();
+
+      setUser(session?.user ?? null);
+    }
+
+    loadUser();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     async function loadStats() {
       if (!supabase || !isSupabaseConfigured) {
         setMemoryCount(0);
         setPhotoCount(0);
         return;
       }
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
 
       if (!user) {
         setUserId(null);
@@ -202,7 +229,7 @@ export function RelationshipStats() {
     }
 
     loadStats();
-  }, []);
+  }, [user]);
 
   async function syncRelationshipSettings(nextUserId: string) {
     if (!supabase) {
@@ -222,8 +249,13 @@ export function RelationshipStats() {
       .maybeSingle();
 
     if (error) {
+      setSyncMessage(
+        "數據同步表還沒建立好。請先在 Supabase 跑 relationship_settings 的 SQL。",
+      );
       return;
     }
+
+    setSyncMessage("");
 
     if (!data && localSettings && !hasMigrated) {
       await saveSettingsToSupabase(nextUserId, localSettings);
@@ -251,11 +283,20 @@ export function RelationshipStats() {
       return;
     }
 
-    await supabase.from("relationship_settings").upsert({
+    const { error } = await supabase.from("relationship_settings").upsert({
       anniversaries: nextSettings.anniversaries,
       start_date: nextSettings.startDate,
       user_id: nextUserId,
     });
+
+    if (error) {
+      setSyncMessage(
+        "數據暫時沒有同步成功，請確認 Supabase 已建立 relationship_settings 表。",
+      );
+      return;
+    }
+
+    setSyncMessage("");
   }
 
   function updateSettings(nextSettings: RelationshipSettings) {
@@ -370,6 +411,12 @@ export function RelationshipStats() {
 
       {isEditing ? (
         <div className="mt-3 space-y-3 rounded-2xl border border-black/[0.06] bg-[#fbfaf8] p-4">
+          {syncMessage ? (
+            <p className="rounded-2xl bg-[#fff6df] p-3 text-sm leading-6 text-[#7b5b20]">
+              {syncMessage}
+            </p>
+          ) : null}
+
           <label className="grid gap-2 text-sm text-[#756e66] md:max-w-sm">
             <span>在一起的開始日</span>
             <input
