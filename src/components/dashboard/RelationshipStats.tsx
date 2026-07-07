@@ -155,14 +155,6 @@ export function RelationshipStats({ spaceId }: { spaceId?: string | null }) {
   const nextAnniversary = upcomingAnniversaries[0] ?? null;
 
   useEffect(() => {
-    const savedSettings = window.localStorage.getItem(relationshipSettingsKey);
-
-    if (savedSettings) {
-      setSettings(normalizeSettings(JSON.parse(savedSettings)));
-    }
-  }, []);
-
-  useEffect(() => {
     if (!supabase || !isSupabaseConfigured) {
       setMemoryCount(0);
       setPhotoCount(0);
@@ -305,12 +297,12 @@ export function RelationshipStats({ spaceId }: { spaceId?: string | null }) {
 
   function updateSettings(nextSettings: RelationshipSettings) {
     setSettings(nextSettings);
-    window.localStorage.setItem(
-      relationshipSettingsKey,
-      JSON.stringify(nextSettings),
-    );
 
     if (userId) {
+      window.localStorage.setItem(
+        relationshipSettingsKey,
+        JSON.stringify(nextSettings),
+      );
       saveSettingsToSupabase(userId, nextSettings);
     }
   }

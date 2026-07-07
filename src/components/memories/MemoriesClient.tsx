@@ -480,19 +480,6 @@ export function MemoriesClient() {
   }, []);
 
   useEffect(() => {
-    const savedMessages = window.localStorage.getItem(dailyMessagesKey);
-    const savedWishes = window.localStorage.getItem(wishesKey);
-
-    if (savedMessages) {
-      setDailyMessages(normalizeDailyMessages(JSON.parse(savedMessages)));
-    }
-
-    if (savedWishes) {
-      setWishes(normalizeWishes(JSON.parse(savedWishes)));
-    }
-  }, []);
-
-  useEffect(() => {
     if (!supabase || !user) {
       return;
     }
@@ -1420,10 +1407,17 @@ export function MemoriesClient() {
               </div>
 
               {space ? (
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <span className="rounded-full border border-black/[0.08] bg-[#fbfaf8] px-4 py-2 text-sm font-semibold tracking-[0.18em]">
-                    {space.invite_code}
+                <div className="grid gap-2 sm:min-w-[20rem]">
+                  <span className="text-xs font-medium tracking-[0.18em] text-[#a26d62]">
+                    你的邀請碼
                   </span>
+                  <button
+                    className="rounded-2xl border border-black/[0.08] bg-[#fbfaf8] px-4 py-3 text-left text-xl font-semibold tracking-[0.16em] text-[#1f1f1d] transition hover:border-black/[0.18]"
+                    onClick={copyInviteCode}
+                    type="button"
+                  >
+                    {space.invite_code}
+                  </button>
                   <button
                     className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-black/[0.08] px-4 text-sm font-medium transition hover:border-black/[0.18]"
                     onClick={copyInviteCode}
