@@ -6,6 +6,7 @@ import {
   CalendarDays,
   Image as ImageIcon,
   Loader2,
+  LogOut,
   MapPin,
   Pencil,
   Plus,
@@ -248,6 +249,11 @@ export function MemoriesClient() {
   const formRef = useRef<HTMLDivElement>(null);
 
   const isDemoMode = !isSupabaseConfigured || !user;
+  const displayName =
+    user?.user_metadata.full_name ??
+    user?.user_metadata.name ??
+    user?.email ??
+    "已登入";
 
   const orderedMemories = useMemo(
     () =>
@@ -438,6 +444,17 @@ export function MemoriesClient() {
   function resetForm() {
     setForm(emptyForm);
     setEditingId(null);
+  }
+
+  async function handleSignOut() {
+    if (!supabase) {
+      return;
+    }
+
+    await supabase.auth.signOut();
+    setUser(null);
+    setMemories(demoMemories);
+    setMessage("已登出，現在回到 Demo 模式。");
   }
 
   function updatePhotoUrl(index: number, value: string) {
@@ -656,14 +673,30 @@ export function MemoriesClient() {
           <a className="font-medium" href="/memories">
             回憶管理
           </a>
-          <div className="flex items-center gap-5 text-sm text-[#756e66]">
+          <div className="flex flex-wrap items-center justify-end gap-3 text-sm text-[#756e66] sm:gap-5">
             <a className="transition hover:text-[#1f1f1d]" href="/">
               首頁
             </a>
             <a className="transition hover:text-[#1f1f1d]" href="/photos">
               照片牆
             </a>
-            <span>{isDemoMode ? "Demo 模式" : "已連接 Supabase"}</span>
+            {isDemoMode ? (
+              <span>Demo 模式</span>
+            ) : (
+              <div className="flex items-center gap-3 rounded-full border border-black/[0.08] bg-white/70 px-3 py-1.5 text-[#1f1f1d] shadow-sm">
+                <span className="max-w-32 truncate sm:max-w-44">
+                  {displayName}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs text-[#756e66] transition hover:bg-[#f0ece5] hover:text-[#1f1f1d]"
+                >
+                  <LogOut className="size-3.5" />
+                  登出
+                </button>
+              </div>
+            )}
           </div>
         </nav>
       </header>
