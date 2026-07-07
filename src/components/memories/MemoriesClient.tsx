@@ -120,6 +120,10 @@ const defaultWishes: WishItem[] = [
 const dailyMessagesKey = "love-site.daily-messages";
 const wishesKey = "love-site.wishes";
 
+function migrationKey(userId: string, dataKey: string) {
+  return `${dataKey}.migrated.${userId}`;
+}
+
 function normalizeDailyMessages(value: unknown): DailyMessage[] {
   if (!Array.isArray(value)) {
     return defaultDailyMessages;
@@ -398,9 +402,7 @@ export function MemoriesClient() {
       return;
     }
 
-    loadMemories(user.id);
-    loadDailyMessages(user.id);
-    loadWishes(user.id);
+    syncUserData(user);
   }, [user]);
 
   async function handlePhotoLocationFile(
@@ -516,6 +518,73 @@ export function MemoriesClient() {
         currentUser.user_metadata.full_name ?? currentUser.email ?? "使用者",
       avatar_url: currentUser.user_metadata.avatar_url ?? null,
     });
+  }
+
+  async function migrateLocalData(currentUser: User) {
+    if (!supabase) {
+      return;
+    }
+
+    await ensureProfile(currentUser);
+
+    const messagesMigratedKey = migrationKey(currentUser.id, dailyMessagesKey);
+    const wishesMigratedKey = migrationKey(currentUser.id, wishesKey);
+    const savedMessages = window.localStorage.getItem(dailyMessagesKey);
+    const savedWishes = window.localStorage.getItem(wishesKey);
+
+    if (savedMessages && !window.localStorage.getItem(messagesMigratedKey)) {
+      const localMessages = normalizeDailyMessages(JSON.parse(savedMessages));
+      const messagesToMigrate = localMessages.filter((localMessage) =>
+        localMessage.content.trim(),
+      );
+
+      if (messagesToMigrate.length > 0) {
+        const { error } = await supabase.from("daily_messages").insert(
+          messagesToMigrate.map((localMessage) => ({
+            user_id: currentUser.id,
+            content: localMessage.content,
+            message_date: localMessage.message_date,
+          })),
+        );
+
+        if (error) {
+          setMessage(error.message);
+          return;
+        }
+      }
+
+      window.localStorage.setItem(messagesMigratedKey, "true");
+    }
+
+    if (savedWishes && !window.localStorage.getItem(wishesMigratedKey)) {
+      const localWishes = normalizeWishes(JSON.parse(savedWishes));
+      const wishesToMigrate = localWishes.filter((wish) => wish.title.trim());
+
+      if (wishesToMigrate.length > 0) {
+        const { error } = await supabase.from("bucket_list").insert(
+          wishesToMigrate.map((wish) => ({
+            user_id: currentUser.id,
+            title: wish.title,
+            status: wish.done ? "completed" : "pending",
+            completed_at: wish.done ? new Date().toISOString() : null,
+          })),
+        );
+
+        if (error) {
+          setMessage(error.message);
+          return;
+        }
+      }
+
+      window.localStorage.setItem(wishesMigratedKey, "true");
+    }
+  }
+
+  async function syncUserData(currentUser: User) {
+    await migrateLocalData(currentUser);
+    await loadMemories(currentUser.id);
+    await loadDailyMessages(currentUser.id);
+    await loadWishes(currentUser.id);
   }
 
   async function loadMemories(userId: string) {
