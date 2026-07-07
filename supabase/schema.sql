@@ -42,6 +42,15 @@ create table if not exists public.photos (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.daily_messages (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  content text not null,
+  message_date date not null default current_date,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.photos
   add column if not exists latitude double precision,
   add column if not exists longitude double precision;
@@ -86,6 +95,8 @@ create index if not exists photos_user_id_idx on public.photos(user_id);
 create index if not exists photos_coordinates_idx
   on public.photos(latitude, longitude)
   where latitude is not null and longitude is not null;
+create index if not exists daily_messages_user_id_date_idx
+  on public.daily_messages(user_id, message_date desc, created_at desc);
 create index if not exists bucket_list_user_id_status_idx
   on public.bucket_list(user_id, status);
 create index if not exists timeline_user_id_event_date_idx
@@ -116,6 +127,11 @@ create trigger set_bucket_list_updated_at
 before update on public.bucket_list
 for each row execute function public.set_updated_at();
 
+drop trigger if exists set_daily_messages_updated_at on public.daily_messages;
+create trigger set_daily_messages_updated_at
+before update on public.daily_messages
+for each row execute function public.set_updated_at();
+
 drop trigger if exists set_timeline_updated_at on public.timeline;
 create trigger set_timeline_updated_at
 before update on public.timeline
@@ -124,6 +140,7 @@ for each row execute function public.set_updated_at();
 alter table public.users enable row level security;
 alter table public.memories enable row level security;
 alter table public.photos enable row level security;
+alter table public.daily_messages enable row level security;
 alter table public.bucket_list enable row level security;
 alter table public.timeline enable row level security;
 
@@ -152,6 +169,12 @@ with check (auth.uid() = user_id);
 drop policy if exists "Users can manage own photos" on public.photos;
 create policy "Users can manage own photos"
 on public.photos for all
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists "Users can manage own daily messages" on public.daily_messages;
+create policy "Users can manage own daily messages"
+on public.daily_messages for all
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
 

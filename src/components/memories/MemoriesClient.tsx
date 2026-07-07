@@ -52,7 +52,7 @@ type MemoryForm = {
 type DailyMessage = {
   id: string;
   content: string;
-  date: string;
+  message_date: string;
 };
 
 type WishItem = {
@@ -102,12 +102,12 @@ const defaultDailyMessages: DailyMessage[] = [
   {
     id: "message-1",
     content: "今天也想把一點點時間留給你。晚點一起散步嗎？",
-    date: new Date().toISOString().slice(0, 10),
+    message_date: new Date().toISOString().slice(0, 10),
   },
   {
     id: "message-2",
     content: "把普通的一天也存起來，之後回頭看會很可愛。",
-    date: "2026-07-06",
+    message_date: "2026-07-06",
   },
 ];
 
@@ -119,6 +119,49 @@ const defaultWishes: WishItem[] = [
 
 const dailyMessagesKey = "love-site.daily-messages";
 const wishesKey = "love-site.wishes";
+
+function normalizeDailyMessages(value: unknown): DailyMessage[] {
+  if (!Array.isArray(value)) {
+    return defaultDailyMessages;
+  }
+
+  return value
+    .filter(
+      (message): message is Partial<DailyMessage> & { date?: string } =>
+        typeof message === "object" &&
+        message !== null &&
+        typeof message.content === "string",
+    )
+    .map((message) => ({
+      id: typeof message.id === "string" ? message.id : crypto.randomUUID(),
+      content: message.content ?? "",
+      message_date:
+        typeof message.message_date === "string"
+          ? message.message_date
+          : typeof message.date === "string"
+            ? message.date
+            : new Date().toISOString().slice(0, 10),
+    }));
+}
+
+function normalizeWishes(value: unknown): WishItem[] {
+  if (!Array.isArray(value)) {
+    return defaultWishes;
+  }
+
+  return value
+    .filter(
+      (wish): wish is Partial<WishItem> =>
+        typeof wish === "object" &&
+        wish !== null &&
+        typeof wish.title === "string",
+    )
+    .map((wish) => ({
+      id: typeof wish.id === "string" ? wish.id : crypto.randomUUID(),
+      done: Boolean(wish.done),
+      title: wish.title ?? "",
+    }));
+}
 
 function formatDate(date: string) {
   return new Intl.DateTimeFormat("zh-Hant", {
@@ -342,11 +385,11 @@ export function MemoriesClient() {
     const savedWishes = window.localStorage.getItem(wishesKey);
 
     if (savedMessages) {
-      setDailyMessages(JSON.parse(savedMessages) as DailyMessage[]);
+      setDailyMessages(normalizeDailyMessages(JSON.parse(savedMessages)));
     }
 
     if (savedWishes) {
-      setWishes(JSON.parse(savedWishes) as WishItem[]);
+      setWishes(normalizeWishes(JSON.parse(savedWishes)));
     }
   }, []);
 
@@ -356,6 +399,8 @@ export function MemoriesClient() {
     }
 
     loadMemories(user.id);
+    loadDailyMessages(user.id);
+    loadWishes(user.id);
   }, [user]);
 
   async function handlePhotoLocationFile(
@@ -499,6 +544,51 @@ export function MemoriesClient() {
     setLoading(false);
   }
 
+  async function loadDailyMessages(userId: string) {
+    if (!supabase) {
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("daily_messages")
+      .select("id,content,message_date")
+      .eq("user_id", userId)
+      .order("message_date", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setDailyMessages((data ?? []) as DailyMessage[]);
+  }
+
+  async function loadWishes(userId: string) {
+    if (!supabase) {
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("bucket_list")
+      .select("id,title,status")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setWishes(
+      (data ?? []).map((wish) => ({
+        id: wish.id,
+        done: wish.status === "completed",
+        title: wish.title,
+      })),
+    );
+  }
+
   function resetForm() {
     setForm(emptyForm);
     setEditingId(null);
@@ -520,10 +610,30 @@ export function MemoriesClient() {
     window.localStorage.setItem(dailyMessagesKey, JSON.stringify(nextMessages));
   }
 
-  function addDailyMessage(event: React.FormEvent<HTMLFormElement>) {
+  async function addDailyMessage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!newDailyMessage.trim()) {
+      return;
+    }
+
+    if (!isDemoMode && supabase && user) {
+      await ensureProfile(user);
+
+      const { error } = await supabase.from("daily_messages").insert({
+        user_id: user.id,
+        content: newDailyMessage.trim(),
+        message_date: new Date().toISOString().slice(0, 10),
+      });
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      setNewDailyMessage("");
+      setIsMessagesOpen(true);
+      await loadDailyMessages(user.id);
       return;
     }
 
@@ -531,7 +641,7 @@ export function MemoriesClient() {
       {
         id: crypto.randomUUID(),
         content: newDailyMessage.trim(),
-        date: new Date().toISOString().slice(0, 10),
+        message_date: new Date().toISOString().slice(0, 10),
       },
       ...dailyMessages,
     ]);
@@ -539,7 +649,23 @@ export function MemoriesClient() {
     setIsMessagesOpen(true);
   }
 
-  function deleteDailyMessage(id: string) {
+  async function deleteDailyMessage(id: string) {
+    if (!isDemoMode && supabase && user) {
+      const { error } = await supabase
+        .from("daily_messages")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", user.id);
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      await loadDailyMessages(user.id);
+      return;
+    }
+
     saveDailyMessages(
       dailyMessages.filter((dailyMessage) => dailyMessage.id !== id),
     );
@@ -550,10 +676,30 @@ export function MemoriesClient() {
     window.localStorage.setItem(wishesKey, JSON.stringify(nextWishes));
   }
 
-  function addWish(event: React.FormEvent<HTMLFormElement>) {
+  async function addWish(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!newWish.trim()) {
+      return;
+    }
+
+    if (!isDemoMode && supabase && user) {
+      await ensureProfile(user);
+
+      const { error } = await supabase.from("bucket_list").insert({
+        user_id: user.id,
+        title: newWish.trim(),
+        status: "pending",
+      });
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      setNewWish("");
+      setIsWishesOpen(true);
+      await loadWishes(user.id);
       return;
     }
 
@@ -569,7 +715,32 @@ export function MemoriesClient() {
     setIsWishesOpen(true);
   }
 
-  function toggleWish(id: string) {
+  async function toggleWish(id: string) {
+    if (!isDemoMode && supabase && user) {
+      const currentWish = wishes.find((wish) => wish.id === id);
+
+      if (!currentWish) {
+        return;
+      }
+
+      const { error } = await supabase
+        .from("bucket_list")
+        .update({
+          completed_at: currentWish.done ? null : new Date().toISOString(),
+          status: currentWish.done ? "pending" : "completed",
+        })
+        .eq("id", id)
+        .eq("user_id", user.id);
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      await loadWishes(user.id);
+      return;
+    }
+
     saveWishes(
       wishes.map((wish) =>
         wish.id === id ? { ...wish, done: !wish.done } : wish,
@@ -577,7 +748,23 @@ export function MemoriesClient() {
     );
   }
 
-  function deleteWish(id: string) {
+  async function deleteWish(id: string) {
+    if (!isDemoMode && supabase && user) {
+      const { error } = await supabase
+        .from("bucket_list")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", user.id);
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      await loadWishes(user.id);
+      return;
+    }
+
     saveWishes(wishes.filter((wish) => wish.id !== id));
   }
 
@@ -880,7 +1067,7 @@ export function MemoriesClient() {
                   >
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <span className="text-xs text-[#8a8379]">
-                        {formatDate(dailyMessage.date)}
+                        {formatDate(dailyMessage.message_date)}
                       </span>
                       <button
                         aria-label="刪除留言"
