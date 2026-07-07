@@ -33,6 +33,12 @@ export function AuthPanel() {
     };
   }, []);
 
+  useEffect(() => {
+    if (user && window.location.pathname === "/") {
+      window.location.replace(`${window.location.origin}/memories`);
+    }
+  }, [user]);
+
   async function handleGoogleLogin() {
     if (!supabase) {
       setStatus("error");
