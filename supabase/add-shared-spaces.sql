@@ -20,6 +20,16 @@ create table if not exists public.space_members (
   unique (space_id, user_id)
 );
 
+create table if not exists public.relationship_settings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  start_date date not null,
+  anniversaries jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id)
+);
+
 alter table public.memories
   add column if not exists space_id uuid references public.spaces(id) on delete cascade;
 alter table public.photos
@@ -57,8 +67,14 @@ create trigger set_spaces_updated_at
 before update on public.spaces
 for each row execute function public.set_updated_at();
 
+drop trigger if exists set_relationship_settings_updated_at on public.relationship_settings;
+create trigger set_relationship_settings_updated_at
+before update on public.relationship_settings
+for each row execute function public.set_updated_at();
+
 alter table public.spaces enable row level security;
 alter table public.space_members enable row level security;
+alter table public.relationship_settings enable row level security;
 
 drop policy if exists "Users can create spaces" on public.spaces;
 create policy "Users can create spaces"
@@ -153,6 +169,12 @@ with check (
 );
 
 drop policy if exists "Members can manage shared relationship settings" on public.relationship_settings;
+drop policy if exists "Users can manage own relationship settings" on public.relationship_settings;
+create policy "Users can manage own relationship settings"
+on public.relationship_settings for all
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
 create policy "Members can manage shared relationship settings"
 on public.relationship_settings for all
 using (
