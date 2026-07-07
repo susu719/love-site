@@ -322,6 +322,26 @@ function isBrowserDisplayableImage(url: string) {
   return !cleanUrl.endsWith(".heic") && !cleanUrl.endsWith(".heif");
 }
 
+function getMemoryPhotoStoragePath(imageUrl: string, userId: string) {
+  try {
+    const url = new URL(imageUrl);
+    const marker = "/storage/v1/object/public/memory-photos/";
+    const markerIndex = url.pathname.indexOf(marker);
+
+    if (markerIndex === -1) {
+      return null;
+    }
+
+    const filePath = decodeURIComponent(
+      url.pathname.slice(markerIndex + marker.length),
+    );
+
+    return filePath.startsWith(`${userId}/`) ? filePath : null;
+  } catch {
+    return null;
+  }
+}
+
 function MemoryCover({
   memory,
   photoCount,
@@ -1025,6 +1045,16 @@ export function MemoriesClient() {
       return;
     }
 
+    const { data: existingPhotos } = await supabase
+      .from("photos")
+      .select("image_url")
+      .eq("memory_id", memoryId)
+      .eq("user_id", userId);
+
+    await deleteStoragePhotos(
+      (existingPhotos ?? []).map((photo) => photo.image_url),
+      userId,
+    );
     await supabase.from("photos").delete().eq("memory_id", memoryId);
 
     const imageUrls = parseImageUrls(imageUrl);
@@ -1043,6 +1073,32 @@ export function MemoriesClient() {
         sort_order: index,
       })),
     );
+  }
+
+  async function deleteStoragePhotos(imageUrls: string[], userId: string) {
+    if (!supabase) {
+      return;
+    }
+
+    const filePaths = Array.from(
+      new Set(
+        imageUrls
+          .map((imageUrl) => getMemoryPhotoStoragePath(imageUrl, userId))
+          .filter((filePath): filePath is string => Boolean(filePath)),
+      ),
+    );
+
+    if (filePaths.length === 0) {
+      return;
+    }
+
+    const { error } = await supabase.storage
+      .from("memory-photos")
+      .remove(filePaths);
+
+    if (error) {
+      setMessage(`照片檔案刪除失敗：${error.message}`);
+    }
   }
 
   function saveDemoMemory() {
@@ -1087,6 +1143,11 @@ export function MemoriesClient() {
     if (!supabase || !user) {
       return;
     }
+
+    await deleteStoragePhotos(
+      memory.photos.map((photo) => photo.image_url),
+      user.id,
+    );
 
     const { error } = await supabase
       .from("memories")
