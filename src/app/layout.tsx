@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "雙人情侶網站",
+  title: "兩個人的日常",
   description: "屬於兩個人的私密回憶空間",
 };
 

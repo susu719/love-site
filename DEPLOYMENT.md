@@ -18,8 +18,7 @@ This project deploys with GitHub, Vercel, and Supabase.
     - `http://localhost:3000`
     - your Vercel production URL
 12. Go to Authentication > Providers.
-13. Enable Email.
-14. Enable Google if you want Google Login.
+13. Enable Google.
 
 ## 2. Local Environment
 
@@ -68,5 +67,4 @@ git push -u origin main
 2. Test the home page.
 3. Test `/memories`.
 4. Test `/photos`.
-5. Test Email Login.
-6. Test Google Login if Google provider is enabled.
+5. Test Google Login.

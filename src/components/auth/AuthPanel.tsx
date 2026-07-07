@@ -1,14 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LogOut, Mail, User } from "lucide-react";
+import { LogOut, User } from "lucide-react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 type AuthStatus = "idle" | "loading" | "success" | "error";
 
 export function AuthPanel() {
-  const [email, setEmail] = useState("");
   const [user, setUser] = useState<SupabaseUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>("idle");
   const [message, setMessage] = useState("");
@@ -60,35 +59,6 @@ export function AuthPanel() {
       setStatus("error");
       setMessage(error.message);
     }
-  }
-
-  async function handleEmailLogin(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!supabase) {
-      setStatus("error");
-      setMessage("請先設定 Supabase 環境變數。");
-      return;
-    }
-
-    setStatus("loading");
-    setMessage("");
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
-
-    if (error) {
-      setStatus("error");
-      setMessage(error.message);
-      return;
-    }
-
-    setStatus("success");
-    setMessage("登入連結已寄出，請到信箱確認。");
   }
 
   async function handleLogout() {
@@ -155,39 +125,8 @@ export function AuthPanel() {
         使用 Google 登入
       </button>
 
-      <div className="my-5 flex items-center gap-3 text-xs text-[#9a938a]">
-        <span className="h-px flex-1 bg-black/[0.08]" />
-        或
-        <span className="h-px flex-1 bg-black/[0.08]" />
-      </div>
-
-      <form className="space-y-3" onSubmit={handleEmailLogin}>
-        <label className="block text-sm font-medium" htmlFor="email">
-          Email
-        </label>
-        <div className="flex h-11 items-center gap-2 rounded-full border border-black/[0.1] bg-[#fbfaf8] px-4 focus-within:border-black/[0.22]">
-          <Mail size={16} className="text-[#8a8379]" />
-          <input
-            className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#aaa39a]"
-            id="email"
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="you@example.com"
-            required
-            type="email"
-            value={email}
-          />
-        </div>
-        <button
-          className="inline-flex h-11 w-full items-center justify-center rounded-full border border-black/[0.1] bg-white px-5 text-sm font-medium transition hover:border-black/[0.18] disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={status === "loading"}
-          type="submit"
-        >
-          寄送 Email 登入連結
-        </button>
-      </form>
-
       <a
-        className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-full border border-black/[0.1] bg-[#fbfaf8] px-5 text-sm font-medium transition hover:border-black/[0.18]"
+        className="mt-3 inline-flex h-11 w-full items-center justify-center rounded-full border border-black/[0.1] bg-[#fbfaf8] px-5 text-sm font-medium transition hover:border-black/[0.18]"
         href="/memories"
       >
         先用 Demo 模式管理回憶

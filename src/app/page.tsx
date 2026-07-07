@@ -227,8 +227,8 @@ export default function Home() {
         className="border-t border-black/[0.06] px-5 py-8 text-sm text-[#756e66] sm:px-8"
       >
         <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p>雙人情侶網站 · Supabase Authentication</p>
-          <p>目前完成 Google Login、Email Login 和登出。</p>
+          <p>兩個人的日常</p>
+          <p>使用 Google 登入，安靜保存只屬於你們的回憶。</p>
         </div>
       </footer>
     </MotionDiv>
