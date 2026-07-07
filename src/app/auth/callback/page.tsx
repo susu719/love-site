@@ -31,7 +31,7 @@ export default function AuthCallbackPage() {
         }
       }
 
-      window.location.replace("/");
+      window.location.replace(`${window.location.origin}/memories`);
     }
 
     finishLogin();
