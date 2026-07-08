@@ -614,6 +614,7 @@ export function MemoriesClient() {
       .from("space_members")
       .select("space_id, spaces(id,name,invite_code)")
       .eq("user_id", currentUser.id)
+      .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
@@ -640,38 +641,47 @@ export function MemoriesClient() {
     setSpaceLoading(false);
   }
 
-  async function migratePersonalRowsToSpace(currentUser: User, spaceId: string) {
+  async function migratePersonalRowsToSpace(
+    currentUser: User,
+    spaceId: string,
+    previousSpaceId?: string | null,
+  ) {
     if (!supabase) {
       return;
     }
 
-    await Promise.all([
-      supabase
-        .from("memories")
-        .update({ space_id: spaceId })
-        .eq("user_id", currentUser.id)
-        .is("space_id", null),
-      supabase
-        .from("photos")
-        .update({ space_id: spaceId })
-        .eq("user_id", currentUser.id)
-        .is("space_id", null),
-      supabase
-        .from("daily_messages")
-        .update({ space_id: spaceId })
-        .eq("user_id", currentUser.id)
-        .is("space_id", null),
-      supabase
-        .from("bucket_list")
-        .update({ space_id: spaceId })
-        .eq("user_id", currentUser.id)
-        .is("space_id", null),
-      supabase
-        .from("relationship_settings")
-        .update({ space_id: spaceId })
-        .eq("user_id", currentUser.id)
-        .is("space_id", null),
-    ]);
+    const client = supabase;
+    const tables = [
+      "memories",
+      "photos",
+      "daily_messages",
+      "bucket_list",
+      "relationship_settings",
+    ];
+
+    await Promise.all(
+      tables.map((table) =>
+        client
+          .from(table)
+          .update({ space_id: spaceId })
+          .eq("user_id", currentUser.id)
+          .is("space_id", null),
+      ),
+    );
+
+    if (!previousSpaceId || previousSpaceId === spaceId) {
+      return;
+    }
+
+    await Promise.all(
+      tables.map((table) =>
+        client
+          .from(table)
+          .update({ space_id: spaceId })
+          .eq("user_id", currentUser.id)
+          .eq("space_id", previousSpaceId),
+      ),
+    );
   }
 
   async function createSharedSpace() {
@@ -754,11 +764,16 @@ export function MemoriesClient() {
       return;
     }
 
-    await migratePersonalRowsToSpace(user, foundSpace.id);
+    const previousSpaceId = space?.id ?? null;
+    await migratePersonalRowsToSpace(user, foundSpace.id, previousSpaceId);
     setInviteCode("");
     setSpace(foundSpace as SharedSpace);
     await syncUserData(user, foundSpace.id);
-    setMessage("已加入共同空間。");
+    setMessage(
+      previousSpaceId && previousSpaceId !== foundSpace.id
+        ? "已改加入這組共同空間，你自己的資料也會移到這裡。"
+        : "已加入共同空間。",
+    );
     setSpaceLoading(false);
   }
 
@@ -1410,7 +1425,7 @@ export function MemoriesClient() {
               </div>
 
               {space ? (
-                <div className="grid gap-2 sm:min-w-[20rem]">
+                <div className="grid gap-3 sm:min-w-[22rem]">
                   <span className="text-xs font-medium tracking-[0.18em] text-[#a26d62]">
                     你的邀請碼
                   </span>
@@ -1429,6 +1444,26 @@ export function MemoriesClient() {
                     <Copy size={15} />
                     複製邀請碼
                   </button>
+                  <div className="rounded-2xl border border-dashed border-black/[0.12] bg-[#fbfaf8] p-3">
+                    <p className="mb-3 text-xs leading-5 text-[#756e66]">
+                      如果你們兩個都不小心建立了邀請碼，請其中一個人在這裡輸入另一半的邀請碼，就能改加入同一個共同空間。
+                    </p>
+                    <form className="flex gap-2" onSubmit={joinSharedSpace}>
+                      <input
+                        className="h-10 min-w-0 flex-1 rounded-full border border-black/[0.1] bg-white px-4 text-sm uppercase outline-none focus:border-black/[0.22]"
+                        onChange={(event) => setInviteCode(event.target.value)}
+                        placeholder="改加入另一組 LOVE-邀請碼"
+                        value={inviteCode}
+                      />
+                      <button
+                        className="inline-flex h-10 shrink-0 items-center justify-center rounded-full border border-black/[0.08] px-4 text-sm font-medium transition hover:border-black/[0.18]"
+                        disabled={spaceLoading}
+                        type="submit"
+                      >
+                        改加入
+                      </button>
+                    </form>
+                  </div>
                 </div>
               ) : (
                 <div className="grid gap-3 lg:min-w-[26rem]">
