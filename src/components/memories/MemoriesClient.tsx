@@ -684,6 +684,71 @@ export function MemoriesClient() {
     );
   }
 
+  async function moveUserRowsToPersonalSpace(
+    currentUser: User,
+    currentSpaceId: string,
+  ) {
+    if (!supabase) {
+      return;
+    }
+
+    const client = supabase;
+    const tables = [
+      "memories",
+      "photos",
+      "daily_messages",
+      "bucket_list",
+      "relationship_settings",
+    ];
+
+    await Promise.all(
+      tables.map((table) =>
+        client
+          .from(table)
+          .update({ space_id: null })
+          .eq("user_id", currentUser.id)
+          .eq("space_id", currentSpaceId),
+      ),
+    );
+  }
+
+  async function leaveSharedSpace() {
+    if (!supabase || !user || !space) {
+      return;
+    }
+
+    const shouldLeave = window.confirm(
+      "確定要退出共同空間嗎？你的資料會搬回個人資料，不會刪掉另一半的資料。",
+    );
+
+    if (!shouldLeave) {
+      return;
+    }
+
+    setSpaceLoading(true);
+    setMessage("");
+
+    await moveUserRowsToPersonalSpace(user, space.id);
+
+    const { error } = await supabase
+      .from("space_members")
+      .delete()
+      .eq("space_id", space.id)
+      .eq("user_id", user.id);
+
+    if (error) {
+      setMessage(error.message);
+      setSpaceLoading(false);
+      return;
+    }
+
+    setSpace(null);
+    setInviteCode("");
+    await loadPersonalUserData(user);
+    setMessage("已退出共同空間，你現在回到個人資料模式。");
+    setSpaceLoading(false);
+  }
+
   async function createSharedSpace() {
     if (!supabase || !user) {
       return;
@@ -1443,6 +1508,15 @@ export function MemoriesClient() {
                   >
                     <Copy size={15} />
                     複製邀請碼
+                  </button>
+                  <button
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-full border border-[#f0c8c0] px-4 text-sm font-medium text-[#a13d2d] transition hover:border-[#d79b90] disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={spaceLoading}
+                    onClick={leaveSharedSpace}
+                    type="button"
+                  >
+                    <LogOut size={15} />
+                    退出共同空間
                   </button>
                   <div className="rounded-2xl border border-dashed border-black/[0.12] bg-[#fbfaf8] p-3">
                     <p className="mb-3 text-xs leading-5 text-[#756e66]">

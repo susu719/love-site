@@ -111,6 +111,11 @@ create policy "Users can join spaces"
 on public.space_members for insert
 with check (user_id = auth.uid());
 
+drop policy if exists "Users can leave spaces" on public.space_members;
+create policy "Users can leave spaces"
+on public.space_members for delete
+using (user_id = auth.uid());
+
 drop policy if exists "Members can manage shared memories" on public.memories;
 create policy "Members can manage shared memories"
 on public.memories for all
